@@ -1,6 +1,11 @@
+use std::f32::consts::PI;
+
 use eframe::{self, egui, epi};
+use nalgebra::Point3;
+use raster::{Camera, Mesh, Rasterizer, Scene};
 
 mod raster;
+mod util;
 
 use crate::raster::Image;
 
@@ -45,17 +50,22 @@ impl epi::App for RasterApp {
           (self.texture_size.0 as f32, self.texture_size.1 as f32);
         ui.image(texture_id, texture_size);
       } else {
-        let image = Image::new(self.texture_size);
+        let image = {
+          let scene = sample_scene();
+          let mut raster = Rasterizer::new(self.texture_size);
+          raster.rasterize(&scene);
+          raster.into_image()
+        };
+
         let texture_data = convert_texture(&image);
         let texture_id = frame.tex_allocator().alloc_srgba_premultiplied(
           self.texture_size,
           texture_data.as_slice(),
         );
-        let texture_size =
-          (self.texture_size.0 as f32, self.texture_size.1 as f32);
-        // rasterize(scene, &mut image)
         self.texture_handle = Some(texture_id);
-        ui.image(texture_id, texture_size);
+        let texture_size_f =
+          (self.texture_size.0 as f32, self.texture_size.1 as f32);
+        ui.image(texture_id, texture_size_f);
       }
     });
   }
@@ -63,4 +73,18 @@ impl epi::App for RasterApp {
 
 fn main() {
   eframe::run_native(Box::new(RasterApp::default()), Default::default());
+}
+
+fn sample_scene() -> Scene {
+  let fov = 130.0 / 360.0 * 2.0 * PI;
+  let camera = Camera::new_perspective(1.0, fov, -1.0, -50.0);
+  let mut scene = Scene::new(camera);
+  scene.add_mesh(Mesh::new_quad([
+    Point3::new(-1.0, -1.0, -2.0),
+    Point3::new(-1.0, 1.0, -3.0),
+    Point3::new(1.0, 1.0, -3.0),
+    Point3::new(1.0, -1.0, -3.0),
+  ]));
+
+  scene
 }

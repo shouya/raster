@@ -128,6 +128,17 @@ impl From<(Point3<f32>, Point3<f32>, Point3<f32>)> for Triangle {
   }
 }
 
+impl Triangle {
+  pub fn edges(&self) -> impl Iterator<Item = (Point3<f32>, Point3<f32>)> + '_ {
+    vec![
+      (self.vertices[0], self.vertices[1]),
+      (self.vertices[1], self.vertices[2]),
+      (self.vertices[2], self.vertices[0]),
+    ]
+    .into_iter()
+  }
+}
+
 pub struct Mesh {
   transform: Matrix4<f32>,
   vertices: Vec<Point3<f32>>,
@@ -150,11 +161,56 @@ impl Mesh {
     mesh
   }
 
-  pub fn new_quad(vertices: [Point3<f32>; 4]) -> Self {
+  // a square with side length 2 on xy plane
+  pub fn new_square() -> Self {
     let mut mesh = Self::new();
+    let vertices: [Point3<f32>; 4] = [
+      // top left
+      [-1.0, 1.0, 0.0].into(),
+      // bottom left
+      [-1.0, -1.0, 0.0].into(),
+      // bottom right
+      [1.0, 1.0, 0.0].into(),
+      // top right
+      [1.0, -1.0, 0.0].into(),
+    ];
     mesh.add_trig(&vertices[0..3].try_into().unwrap());
     mesh.add_trig(&vertices[1..4].try_into().unwrap());
     mesh
+  }
+
+  // a cube with side length 2
+  pub fn new_cube() -> Self {
+    let mut mesh = Self::new();
+    let v: [Point3<f32>; 8] = [
+      [1.0, 1.0, 1.0].into(),    // 0
+      [1.0, 1.0, -1.0].into(),   // 1
+      [1.0, -1.0, -1.0].into(),  // 2
+      [1.0, -1.0, 1.0].into(),   // 3
+      [-1.0, -1.0, 1.0].into(),  // 4
+      [-1.0, -1.0, -1.0].into(), // 5
+      [-1.0, 1.0, -1.0].into(),  // 6
+      [-1.0, 1.0, 1.0].into(),   // 7
+    ];
+
+    // front
+    mesh.add_quad(&[v[0], v[3], v[7], v[4]]);
+    // back
+    mesh.add_quad(&[v[1], v[2], v[6], v[5]]);
+    // top
+    mesh.add_quad(&[v[0], v[1], v[7], v[6]]);
+    // bottom
+    mesh.add_quad(&[v[2], v[3], v[5], v[4]]);
+    // left
+    mesh.add_quad(&[v[4], v[5], v[7], v[6]]);
+    // right
+    mesh.add_quad(&[v[0], v[1], v[3], v[2]]);
+    mesh
+  }
+
+  pub fn transformed(mut self, transform: Matrix4<f32>) -> Self {
+    self.transform = self.transform * transform;
+    self
   }
 
   pub fn iter_triangles(&self) -> impl Iterator<Item = Triangle> + '_ {
@@ -191,6 +247,9 @@ impl Mesh {
     if a > b {
       mem::swap(&mut a, &mut b);
     }
+    if !self.edges.contains_key(&a) {
+      return false;
+    }
     self.edges[&a].binary_search(&b).is_ok()
   }
 
@@ -201,6 +260,11 @@ impl Mesh {
     self.add_edge(a_idx, b_idx);
     self.add_edge(b_idx, c_idx);
     self.add_edge(c_idx, a_idx);
+  }
+
+  fn add_quad(&mut self, quad: &[Point3<f32>; 4]) {
+    self.add_trig(&[quad[0], quad[1], quad[2]]);
+    self.add_trig(&[quad[1], quad[2], quad[3]]);
   }
 
   fn add_vert(&mut self, p: Point3<f32>) -> usize {
@@ -255,7 +319,7 @@ impl Scene {
 
 pub enum RasterizerMode {
   Wireframe,
-  Filled
+  Filled,
 }
 
 pub struct Rasterizer {
@@ -269,7 +333,11 @@ impl Rasterizer {
     let image = Image::new(size);
     let zbuffer = Zbuffer::new(size);
     let mode = RasterizerMode::Filled;
-    Self { image, zbuffer, mode }
+    Self {
+      image,
+      zbuffer,
+      mode,
+    }
   }
 
   pub fn wireframe(&mut self) {
@@ -288,11 +356,13 @@ impl Rasterizer {
   }
 
   pub fn draw_triangle(&mut self, camera: &Camera, triangle: &Triangle) {
-    for vert in triangle.vertices.iter() {
-      // draw the vertices directly
-      let point = camera.world_to_camera(vert);
-      if let Some(coords) = self.camera_to_screen(point) {
-        self.image.pixel_mut(coords).unwrap().x += 1.0;
+    for (a, b) in triangle.edges() {
+      let a = camera.world_to_camera(&a);
+      let b = camera.world_to_camera(&b);
+      if let Some(a) = self.camera_to_screen(a) {
+        if let Some(b) = self.camera_to_screen(b) {
+          self.draw_line(a, b);
+        }
       }
     }
   }
@@ -307,6 +377,52 @@ impl Rasterizer {
 
   pub fn size(&self) -> (usize, usize) {
     (self.image.width(), self.image.height())
+  }
+
+  // the caller needs to ensure p1 and p2 are on screen
+  fn draw_line(&mut self, p1: (usize, usize), p2: (usize, usize)) {
+    let cast_tuple = |(a, b)| (a as i32, b as i32);
+    let (mut p1, mut p2) = (cast_tuple(p1), cast_tuple(p2));
+    let mut dx: i32 = p2.0 - p1.0;
+    let mut dy: i32 = p2.1 - p1.1;
+
+    if dx.abs() >= dy.abs() {
+      if dx < 0 {
+        mem::swap(&mut p1, &mut p2);
+        dx = -dx;
+        dy = -dy;
+      }
+
+      let x0 = p1.0;
+      let y0 = p1.1;
+      let d = dy as f32 / dx as f32;
+
+      for n in 0..dx {
+        let x = (x0 + n) as usize;
+        let y = (y0 + (d * (n as f32)).round() as i32) as usize;
+        if let Some(pixel) = self.image.pixel_mut((x, y)) {
+          pixel.x = 1.0;
+        }
+      }
+    } else {
+      if dy < 0 {
+        mem::swap(&mut p1, &mut p2);
+        dx = -dx;
+        dy = -dy;
+      }
+
+      let x0 = p1.0;
+      let y0 = p1.1;
+      let d = dx as f32 / dy as f32;
+
+      for n in 0..dy {
+        let x = (x0 + (d * (n as f32)).round() as i32) as usize;
+        let y = (y0 + n) as usize;
+        if let Some(pixel) = self.image.pixel_mut((x, y)) {
+          pixel.x = 1.0;
+        }
+      }
+    }
   }
 }
 

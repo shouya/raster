@@ -1,7 +1,7 @@
 use std::f32::consts::PI;
 
 use eframe::{self, egui, epi};
-use nalgebra::{Matrix4, Point3, Vector3};
+use nalgebra::{Matrix4, Point3, Vector2, Vector3};
 use raster::{Camera, Mesh, Rasterizer, Scene};
 
 mod raster;
@@ -30,6 +30,12 @@ impl Default for RasterApp {
 pub struct Tunable {
   distance: f32,
   fov: f32,
+  rot_x: f32,
+  rot_y: f32,
+  rot_z: f32,
+  trans_x: f32,
+  trans_y: f32,
+  trans_z: f32
 }
 
 impl Default for Tunable {
@@ -37,6 +43,12 @@ impl Default for Tunable {
     Self {
       distance: 10.0,
       fov: 100.0,
+      rot_x: 0.0,
+      rot_y: 0.0,
+      rot_z: 0.0,
+      trans_x: 0.0,
+      trans_y: 0.0,
+      trans_z: 0.0
     }
   }
 }
@@ -63,6 +75,9 @@ impl epi::App for RasterApp {
       let sliders = [
         (&mut self.tunable.distance, -10.0, 100.0, "Distance"),
         (&mut self.tunable.fov, 10.0, 180.0, "FoV"),
+        (&mut self.tunable.rot_x, -2.0*PI, 2.0*PI, "Rotation (X)"),
+        (&mut self.tunable.rot_y, -2.0*PI, 2.0*PI, "Rotation (Y)"),
+        (&mut self.tunable.rot_z, -2.0*PI, 2.0*PI, "Rotation (Z)"),
       ];
 
       for (v, mi, ma, t) in sliders {
@@ -118,12 +133,8 @@ fn sample_scene(tunable: &Tunable) -> Scene {
   camera.transform(&(cam_rot * cam_trans));
 
   let mut scene = Scene::new(camera);
-  scene.add_mesh(Mesh::new_quad([
-    Point3::new(-1.0, -1.0, -3.0),
-    Point3::new(-1.0, 0.1, -3.0),
-    Point3::new(1.0, 1.0, -3.0),
-    Point3::new(1.0, -1.0, -3.0),
-  ]));
+  let rotation = Vector3::new(tunable.rot_x, tunable.rot_y, tunable.rot_z);
+  scene.add_mesh(Mesh::new_cube().transformed(Matrix4::new_rotation(rotation)));
 
   // scene.add_mesh(Mesh::new_quad([
   //   Point3::new(-1.0, -1.0, -1.0),

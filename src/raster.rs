@@ -42,9 +42,16 @@ impl Image {
     self.dimension.1
   }
 
-  pub fn pixel_mut(&mut self, coords: (usize, usize)) -> Option<&mut Color> {
-    let idx = coords.1 * self.width() + coords.0;
-    self.pixels.get_mut(idx)
+  pub fn pixel_mut(&mut self, coords: (i32, i32)) -> Option<&mut Color> {
+    if coords.0 < 0
+      || coords.1 < 0
+      || coords.0 >= self.width() as i32
+      || coords.1 >= self.height() as i32
+    {
+      return None;
+    }
+    let idx = coords.1 * self.width() as i32 + coords.0;
+    self.pixels.get_mut(idx as usize)
   }
 }
 
@@ -357,32 +364,26 @@ impl Rasterizer {
 
   pub fn draw_triangle(&mut self, camera: &Camera, triangle: &Triangle) {
     for (a, b) in triangle.edges() {
-      let a = camera.world_to_camera(&a);
-      let b = camera.world_to_camera(&b);
-      if let Some(a) = self.camera_to_screen(a) {
-        if let Some(b) = self.camera_to_screen(b) {
-          self.draw_line(a, b);
-        }
-      }
+      let a = self.camera_to_screen(camera.world_to_camera(&a));
+      let b = self.camera_to_screen(camera.world_to_camera(&b));
+      self.draw_line(a, b);
     }
   }
 
-  pub fn camera_to_screen(&self, point: Point3<f32>) -> Option<(usize, usize)> {
+  // note: the output may go out of screen
+  pub fn camera_to_screen(&self, point: Point3<f32>) -> (i32, i32) {
     let size = self.size();
     let scale = Vector2::new(size.0 as f32, size.1 as f32);
     let offset = Vector2::new(1.0, 1.0);
     let mapped_point = (point.xy().coords + offset / 2.0).component_mul(&scale);
-    point2_to_pixel(&mapped_point.into(), size)
+    point2_to_pixel(&mapped_point.into())
   }
 
   pub fn size(&self) -> (usize, usize) {
     (self.image.width(), self.image.height())
   }
 
-  // the caller needs to ensure p1 and p2 are on screen
-  fn draw_line(&mut self, p1: (usize, usize), p2: (usize, usize)) {
-    let cast_tuple = |(a, b)| (a as i32, b as i32);
-    let (mut p1, mut p2) = (cast_tuple(p1), cast_tuple(p2));
+  fn draw_line(&mut self, mut p1: (i32, i32), mut p2: (i32, i32)) {
     let mut dx: i32 = p2.0 - p1.0;
     let mut dy: i32 = p2.1 - p1.1;
 
@@ -398,8 +399,8 @@ impl Rasterizer {
       let d = dy as f32 / dx as f32;
 
       for n in 0..dx {
-        let x = (x0 + n) as usize;
-        let y = (y0 + (d * (n as f32)).round() as i32) as usize;
+        let x = (x0 + n);
+        let y = (y0 + (d * (n as f32)).round() as i32);
         if let Some(pixel) = self.image.pixel_mut((x, y)) {
           pixel.x = 1.0;
         }
@@ -416,8 +417,8 @@ impl Rasterizer {
       let d = dx as f32 / dy as f32;
 
       for n in 0..dy {
-        let x = (x0 + (d * (n as f32)).round() as i32) as usize;
-        let y = (y0 + n) as usize;
+        let x = (x0 + (d * (n as f32)).round() as i32);
+        let y = (y0 + n);
         if let Some(pixel) = self.image.pixel_mut((x, y)) {
           pixel.x = 1.0;
         }

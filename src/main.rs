@@ -35,7 +35,7 @@ pub struct Tunable {
   rot_z: f32,
   trans_x: f32,
   trans_y: f32,
-  trans_z: f32
+  trans_z: f32,
 }
 
 impl Default for Tunable {
@@ -48,7 +48,7 @@ impl Default for Tunable {
       rot_z: 0.0,
       trans_x: 0.0,
       trans_y: 0.0,
-      trans_z: 0.0
+      trans_z: 0.0,
     }
   }
 }
@@ -75,9 +75,12 @@ impl epi::App for RasterApp {
       let sliders = [
         (&mut self.tunable.distance, -10.0, 100.0, "Distance"),
         (&mut self.tunable.fov, 10.0, 180.0, "FoV"),
-        (&mut self.tunable.rot_x, -2.0*PI, 2.0*PI, "Rotation (X)"),
-        (&mut self.tunable.rot_y, -2.0*PI, 2.0*PI, "Rotation (Y)"),
-        (&mut self.tunable.rot_z, -2.0*PI, 2.0*PI, "Rotation (Z)"),
+        (&mut self.tunable.rot_x, -2.0 * PI, 2.0 * PI, "Rotation (X)"),
+        (&mut self.tunable.rot_y, -2.0 * PI, 2.0 * PI, "Rotation (Y)"),
+        (&mut self.tunable.rot_z, -2.0 * PI, 2.0 * PI, "Rotation (Z)"),
+        (&mut self.tunable.trans_x, -5.0, 5.0, "Translation (X)"),
+        (&mut self.tunable.trans_y, -5.0, 5.0, "Translation (Y)"),
+        (&mut self.tunable.trans_z, -5.0, 5.0, "Translation (Z)"),
       ];
 
       for (v, mi, ma, t) in sliders {
@@ -121,20 +124,22 @@ fn main() {
   eframe::run_native(Box::new(RasterApp::default()), Default::default());
 }
 
-fn sample_scene(tunable: &Tunable) -> Scene {
-  let fov = tunable.fov / 360.0 * 2.0 * PI;
+fn sample_scene(tun: &Tunable) -> Scene {
+  let fov = tun.fov / 360.0 * 2.0 * PI;
   let mut camera = Camera::new_perspective(16.0 / 9.0, fov, -50.0, -1.0);
   let cam_rot = Matrix4::new_nonuniform_scaling(&Vector3::new(-1.0, 1.0, 1.0));
-  let cam_trans = Matrix4::new_translation(&Vector3::new(
-    0.0,
-    0.0,
-    tunable.distance,
-  ));
+  let cam_trans =
+    Matrix4::new_translation(&Vector3::new(0.0, 0.0, tun.distance));
   camera.transform(&(cam_rot * cam_trans));
 
   let mut scene = Scene::new(camera);
-  let rotation = Vector3::new(tunable.rot_x, tunable.rot_y, tunable.rot_z);
-  scene.add_mesh(Mesh::new_cube().transformed(Matrix4::new_rotation(rotation)));
+  let rotation = Vector3::new(tun.rot_x, tun.rot_y, tun.rot_z);
+  let translation = Vector3::new(tun.trans_x, tun.trans_y, tun.trans_z);
+  scene.add_mesh(
+    Mesh::new_cube()
+      .transformed(Matrix4::new_translation(&translation))
+      .transformed(Matrix4::new_rotation(rotation))
+  );
 
   // scene.add_mesh(Mesh::new_quad([
   //   Point3::new(-1.0, -1.0, -1.0),

@@ -108,20 +108,29 @@ fn main() {
 
 fn sample_scene(tunable: &Tunable) -> Scene {
   let fov = tunable.fov / 360.0 * 2.0 * PI;
-  let mut camera = Camera::new_perspective(16.0/9.0, fov, 1.0, 50.0);
-  camera.transform(&Matrix4::new_translation(&Vector3::new(
+  let mut camera = Camera::new_perspective(16.0 / 9.0, fov, -50.0, -1.0);
+  let cam_rot = Matrix4::new_nonuniform_scaling(&Vector3::new(-1.0, 1.0, 1.0));
+  let cam_trans = Matrix4::new_translation(&Vector3::new(
     0.0,
     0.0,
     tunable.distance,
-  )));
+  ));
+  camera.transform(&(cam_rot * cam_trans));
 
   let mut scene = Scene::new(camera);
   scene.add_mesh(Mesh::new_quad([
-    Point3::new(-1.0, -1.0, -2.0),
-    Point3::new(-1.0, 1.0, -3.0),
+    Point3::new(-1.0, -1.0, -3.0),
+    Point3::new(-1.0, 0.1, -3.0),
     Point3::new(1.0, 1.0, -3.0),
     Point3::new(1.0, -1.0, -3.0),
   ]));
+
+  // scene.add_mesh(Mesh::new_quad([
+  //   Point3::new(-1.0, -1.0, -1.0),
+  //   Point3::new(-1.0, 1.0, -1.0),
+  //   Point3::new(1.0, 1.0, -1.0),
+  //   Point3::new(1.0, -1.0, -1.0),
+  // ]));
 
   scene
 }

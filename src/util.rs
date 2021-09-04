@@ -15,16 +15,6 @@ pub fn point2_to_pixel(
   Some((x as usize, y as usize))
 }
 
-pub fn sorted_tuple2<T>(mut a: (T, T)) -> (T, T)
-where
-  T: Ord + Copy,
-{
-  if a.0 > a.1 {
-    mem::swap(&mut a.0, &mut a.1);
-  }
-  a
-}
-
 pub fn sorted_tuple3<T>(mut a: (T, T, T)) -> (T, T, T)
 where
   T: Ord + Copy,

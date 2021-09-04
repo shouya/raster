@@ -1,11 +1,10 @@
 use std::{
   collections::HashMap,
   convert::TryInto,
-  f32::consts::PI,
   mem::{self, swap},
 };
 
-use nalgebra::{Matrix4, Point2, Point3, Vector3, Vector4};
+use nalgebra::{Matrix4, Point2, Point3, Vector2, Vector3, Vector4};
 
 use crate::util::{point2_to_pixel, sorted_tuple3};
 
@@ -85,9 +84,10 @@ impl Zbuffer {
 }
 
 pub struct Camera {
+  // world coordinate
   transform: Matrix4<f32>,
-  // clipping_near: f32,
-  // clipping_far: f32,
+  perspective: Matrix4<f32>, // clipping_near: f32,
+                             // clipping_far: f32
 }
 
 impl Camera {
@@ -97,15 +97,26 @@ impl Camera {
     znear: f32,
     zfar: f32,
   ) -> Self {
-    let transform = Matrix4::new_perspective(aspect, fovy, znear, zfar);
-    Self { transform }
+    let perspective = Matrix4::new_perspective(aspect, fovy, znear, zfar);
+    let transform = Matrix4::identity();
+    Self {
+      perspective,
+      transform,
+    }
   }
-  pub fn point_to_screen(&self, point: &Point3<f32>) -> Point2<f32> {
-    self.transform.transform_point(point).xy()
+
+  pub fn world_to_camera(&self, point: &Point3<f32>) -> Point3<f32> {
+    // xy: position
+    // z: depth
+    (self.perspective * self.transform).transform_point(point)
+  }
+
+  pub fn transform(&mut self, trans: &Matrix4<f32>) {
+    self.transform *= trans;
   }
 }
 
-struct Triangle {
+pub struct Triangle {
   vertices: [Point3<f32>; 3],
 }
 
@@ -242,7 +253,13 @@ impl Scene {
   }
 }
 
+pub enum RasterizerMode {
+  Wireframe,
+  Filled
+}
+
 pub struct Rasterizer {
+  mode: RasterizerMode,
   image: Image,
   zbuffer: Zbuffer,
 }
@@ -251,7 +268,12 @@ impl Rasterizer {
   pub fn new(size: (usize, usize)) -> Self {
     let image = Image::new(size);
     let zbuffer = Zbuffer::new(size);
-    Self { image, zbuffer }
+    let mode = RasterizerMode::Filled;
+    Self { image, zbuffer, mode }
+  }
+
+  pub fn wireframe(&mut self) {
+    self.mode = RasterizerMode::Wireframe;
   }
 
   pub fn rasterize(&mut self, scene: &Scene) {
@@ -267,11 +289,20 @@ impl Rasterizer {
 
   pub fn draw_triangle(&mut self, camera: &Camera, triangle: &Triangle) {
     for vert in triangle.vertices.iter() {
-      let point = camera.point_to_screen(vert);
-      if let Some(coords) = point2_to_pixel(&point, self.size()) {
+      // draw the vertices directly
+      let point = camera.world_to_camera(vert);
+      if let Some(coords) = self.camera_to_screen(point) {
         self.image.pixel_mut(coords).unwrap().x += 1.0;
       }
     }
+  }
+
+  pub fn camera_to_screen(&self, point: Point3<f32>) -> Option<(usize, usize)> {
+    let size = self.size();
+    let scale = Vector2::new(size.0 as f32, size.1 as f32);
+    let offset = Vector2::new(1.0, 1.0);
+    let mapped_point = (point.xy().coords + offset / 2.0).component_mul(&scale);
+    point2_to_pixel(&mapped_point.into(), size)
   }
 
   pub fn size(&self) -> (usize, usize) {
@@ -284,5 +315,7 @@ mod test {
   use super::*;
 
   #[test]
-  fn test_camera() {}
+  fn test_camera() {
+    assert!(false);
+  }
 }

@@ -2,12 +2,12 @@ use std::f32::consts::PI;
 
 use eframe::{self, egui, epi};
 use nalgebra::{Matrix4, Point3, Vector2, Vector3};
-use raster::{Camera, Mesh, Rasterizer, Scene};
+use raster::{Camera, Mesh, Rasterizer, RasterizerMode, Scene};
 
 mod raster;
 mod util;
 
-use crate::raster::Image;
+use crate::raster::{Image, Zbuffer};
 
 struct RasterApp {
   texture_size: (usize, usize),
@@ -36,6 +36,7 @@ pub struct Tunable {
   trans_x: f32,
   trans_y: f32,
   trans_z: f32,
+  mode: RasterizerMode,
 }
 
 impl Default for Tunable {
@@ -49,6 +50,7 @@ impl Default for Tunable {
       trans_x: 0.0,
       trans_y: 0.0,
       trans_z: 0.0,
+      mode: RasterizerMode::default(),
     }
   }
 }
@@ -72,15 +74,16 @@ impl epi::App for RasterApp {
 
   fn update(&mut self, ctx: &egui::CtxRef, frame: &mut epi::Frame) {
     egui::SidePanel::left("tunable").show(ctx, |ui| {
+      let t = &mut self.tunable;
       let sliders = [
-        (&mut self.tunable.distance, -10.0, 100.0, "Distance"),
-        (&mut self.tunable.fov, 10.0, 180.0, "FoV"),
-        (&mut self.tunable.rot_x, -2.0 * PI, 2.0 * PI, "Rotation (X)"),
-        (&mut self.tunable.rot_y, -2.0 * PI, 2.0 * PI, "Rotation (Y)"),
-        (&mut self.tunable.rot_z, -2.0 * PI, 2.0 * PI, "Rotation (Z)"),
-        (&mut self.tunable.trans_x, -5.0, 5.0, "Translation (X)"),
-        (&mut self.tunable.trans_y, -5.0, 5.0, "Translation (Y)"),
-        (&mut self.tunable.trans_z, -5.0, 5.0, "Translation (Z)"),
+        (&mut t.distance, -10.0, 100.0, "Distance"),
+        (&mut t.fov, 10.0, 180.0, "FoV"),
+        (&mut t.rot_x, -2.0 * PI, 2.0 * PI, "Rotation (X)"),
+        (&mut t.rot_y, -2.0 * PI, 2.0 * PI, "Rotation (Y)"),
+        (&mut t.rot_z, -2.0 * PI, 2.0 * PI, "Rotation (Z)"),
+        (&mut t.trans_x, -5.0, 5.0, "Translation (X)"),
+        (&mut t.trans_y, -5.0, 5.0, "Translation (Y)"),
+        (&mut t.trans_z, -5.0, 5.0, "Translation (Z)"),
       ];
 
       for (v, mi, ma, t) in sliders {
@@ -88,15 +91,22 @@ impl epi::App for RasterApp {
           self.redraw = true;
         }
       }
+
+      use RasterizerMode::*;
+
+      if (ui.radio_value(&mut t.mode, Shaded, "Shaded")).clicked() {
+        self.redraw = true;
+      }
+      if (ui.radio_value(&mut t.mode, Zbuffer, "Zbuffer")).clicked() {
+        self.redraw = true;
+      }
     });
 
     egui::CentralPanel::default().show(ctx, |ui| {
       if self.texture_handle.is_none() || self.redraw {
         let image = {
           let scene = sample_scene(&self.tunable);
-          let mut raster = Rasterizer::new(self.texture_size);
-          raster.rasterize(&scene);
-          raster.into_image()
+          render_scene(&self.tunable, self.texture_size, &scene)
         };
 
         let texture_data = convert_texture(&image);
@@ -124,6 +134,13 @@ fn main() {
   eframe::run_native(Box::new(RasterApp::default()), Default::default());
 }
 
+fn render_scene(tun: &Tunable, size: (usize, usize), scene: &Scene) -> Image {
+  let mut raster = Rasterizer::new(size);
+  raster.set_mode(tun.mode);
+  raster.rasterize(&scene);
+  raster.into_image()
+}
+
 fn sample_scene(tun: &Tunable) -> Scene {
   let fov = tun.fov / 360.0 * 2.0 * PI;
   let mut camera = Camera::new_perspective(16.0 / 9.0, fov, -50.0, -1.0);
@@ -135,10 +152,11 @@ fn sample_scene(tun: &Tunable) -> Scene {
   let mut scene = Scene::new(camera);
   let rotation = Vector3::new(tun.rot_x, tun.rot_y, tun.rot_z);
   let translation = Vector3::new(tun.trans_x, tun.trans_y, tun.trans_z);
+
   scene.add_mesh(
     Mesh::new_cube()
       .transformed(Matrix4::new_translation(&translation))
-      .transformed(Matrix4::new_rotation(rotation))
+      .transformed(Matrix4::new_rotation(rotation)),
   );
 
   // scene.add_mesh(Mesh::new_quad([

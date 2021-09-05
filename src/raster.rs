@@ -10,6 +10,17 @@ use crate::util::{point2_to_pixel, sorted_tuple3};
 
 type Color = Vector4<f32>;
 
+pub(crate) mod COLOR {
+  use super::*;
+
+  pub const fn rgb(r: f32, g: f32, b: f32) -> Color {
+    rgba(r, g, b, 1.0)
+  }
+  pub const fn rgba(r: f32, g: f32, b: f32, a: f32) -> Color {
+    Vector4::new(r, g, b, a)
+  }
+}
+
 pub struct Image {
   dimension: (usize, usize),
   pixels: Vec<Color>,
@@ -67,7 +78,7 @@ impl Zbuffer {
     let len = size.0 * size.1;
     let mut buffer = Vec::with_capacity(len);
     for _ in 0..len {
-      buffer.push(-1.0);
+      buffer.push(99999.0);
     }
 
     Self {
@@ -84,9 +95,42 @@ impl Zbuffer {
     self.dimension.1
   }
 
-  pub fn depth_mut(&mut self, pixel: (usize, usize)) -> Option<&mut f32> {
-    let idx = pixel.1 * self.width() + pixel.0;
-    self.buffer.get_mut(idx)
+  pub fn depth(&self, coords: (i32, i32)) -> Option<&f32> {
+    if coords.0 < 0
+      || coords.1 < 0
+      || coords.0 >= self.width() as i32
+      || coords.1 >= self.height() as i32
+    {
+      return None;
+    }
+
+    let idx = coords.1 * self.width() as i32 + coords.0;
+    self.buffer.get(idx as usize)
+  }
+
+  pub fn depth_mut(&mut self, coords: (i32, i32)) -> Option<&mut f32> {
+    if coords.0 < 0
+      || coords.1 < 0
+      || coords.0 >= self.width() as i32
+      || coords.1 >= self.height() as i32
+    {
+      return None;
+    }
+
+    let idx = coords.1 * self.width() as i32 + coords.0;
+    self.buffer.get_mut(idx as usize)
+  }
+
+  pub fn to_image(&self) -> Image {
+    let mut img = Image::new(self.dimension);
+    for x in 0..self.width() {
+      for y in 0..self.height() {
+        let coords = (x as i32, y as i32);
+        let d = *self.depth(coords).unwrap();
+        *img.pixel_mut(coords).unwrap() = COLOR::rgb(d, d, d);
+      }
+    }
+    img
   }
 }
 
@@ -324,9 +368,17 @@ impl Scene {
   }
 }
 
+#[derive(PartialEq, Clone, Copy)]
 pub enum RasterizerMode {
   Wireframe,
-  Filled,
+  Shaded,
+  Zbuffer,
+}
+
+impl Default for RasterizerMode {
+  fn default() -> Self {
+    RasterizerMode::Shaded
+  }
 }
 
 pub struct Rasterizer {
@@ -339,7 +391,7 @@ impl Rasterizer {
   pub fn new(size: (usize, usize)) -> Self {
     let image = Image::new(size);
     let zbuffer = Zbuffer::new(size);
-    let mode = RasterizerMode::Filled;
+    let mode = RasterizerMode::Shaded;
     Self {
       image,
       zbuffer,
@@ -347,8 +399,8 @@ impl Rasterizer {
     }
   }
 
-  pub fn wireframe(&mut self) {
-    self.mode = RasterizerMode::Wireframe;
+  pub fn set_mode(&mut self, mode: RasterizerMode) {
+    self.mode = mode;
   }
 
   pub fn rasterize(&mut self, scene: &Scene) {
@@ -359,15 +411,29 @@ impl Rasterizer {
   }
 
   pub fn into_image(self) -> Image {
-    self.image
+    match self.mode {
+      RasterizerMode::Zbuffer => self.zbuffer.to_image(),
+      _ => self.image,
+    }
   }
 
   pub fn draw_triangle(&mut self, camera: &Camera, triangle: &Triangle) {
     for (a, b) in triangle.edges() {
-      let a = self.camera_to_screen(camera.world_to_camera(&a));
-      let b = self.camera_to_screen(camera.world_to_camera(&b));
-      self.draw_line(a, b);
+      let (a, da) = self.world_to_screen(camera, &a);
+      let (b, db) = self.world_to_screen(camera, &b);
+      self.draw_line(a, da, b, db);
     }
+  }
+
+  // point and depth
+  pub fn world_to_screen(
+    &self,
+    camera: &Camera,
+    point: &Point3<f32>,
+  ) -> ((i32, i32), f32) {
+    let pcam = camera.world_to_camera(&point);
+    let pscr = self.camera_to_screen(pcam);
+    (pscr, pcam.z)
   }
 
   // note: the output may go out of screen
@@ -383,45 +449,77 @@ impl Rasterizer {
     (self.image.width(), self.image.height())
   }
 
-  fn draw_line(&mut self, mut p1: (i32, i32), mut p2: (i32, i32)) {
+  // checks the zbuffer
+  fn draw_pixel(&mut self, depth: f32, coords: (i32, i32), color: Color) {
+    if let Some(d) = self.zbuffer.depth_mut(coords) {
+      if *d > depth {
+        *d = depth;
+        self.put_pixel(coords, color)
+      }
+    }
+  }
+
+  // do not check for zbuffer
+  fn put_pixel(&mut self, coords: (i32, i32), color: Color) {
+    if let Some(pixel) = self.image.pixel_mut(coords) {
+      *pixel = color;
+    }
+  }
+
+  // fn draw_triangle(&mut self, triangle: Triangle) {
+  //   triangle
+  // }
+
+  fn draw_line(
+    &mut self,
+    mut p1: (i32, i32),
+    mut d1: f32,
+    mut p2: (i32, i32),
+    mut d2: f32,
+  ) {
     let mut dx: i32 = p2.0 - p1.0;
     let mut dy: i32 = p2.1 - p1.1;
+    let mut dz: f32 = d2 - d1;
 
     if dx.abs() >= dy.abs() {
       if dx < 0 {
         mem::swap(&mut p1, &mut p2);
+        mem::swap(&mut d1, &mut d2);
         dx = -dx;
         dy = -dy;
+        dz = -dz;
       }
 
       let x0 = p1.0;
       let y0 = p1.1;
+      let z0 = d1;
       let d = dy as f32 / dx as f32;
 
       for n in 0..dx {
-        let x = (x0 + n);
-        let y = (y0 + (d * (n as f32)).round() as i32);
-        if let Some(pixel) = self.image.pixel_mut((x, y)) {
-          pixel.x = 1.0;
-        }
+        let x = x0 + n;
+        let y = y0 + (d * (n as f32)).round() as i32;
+        let z = z0 + dz * (n as f32);
+        self.draw_pixel(z, (x, y), COLOR::rgb(1.0, 0.0, 0.0));
       }
     } else {
       if dy < 0 {
         mem::swap(&mut p1, &mut p2);
+        mem::swap(&mut d1, &mut d2);
         dx = -dx;
         dy = -dy;
+        dz = -dz;
       }
 
       let x0 = p1.0;
       let y0 = p1.1;
+      let z0 = d1;
       let d = dx as f32 / dy as f32;
 
       for n in 0..dy {
-        let x = (x0 + (d * (n as f32)).round() as i32);
-        let y = (y0 + n);
-        if let Some(pixel) = self.image.pixel_mut((x, y)) {
-          pixel.x = 1.0;
-        }
+        let x = x0 + (d * (n as f32)).round() as i32;
+        let y = y0 + n;
+        let z = z0 + dz * (n as f32);
+        self.draw_pixel(z, (x, y), COLOR::rgb(1.0, 0.0, 0.0));
       }
     }
   }

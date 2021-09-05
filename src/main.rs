@@ -35,6 +35,8 @@ impl Default for RasterApp {
 pub struct Tunable {
   distance: f32,
   fov: f32,
+  znear: f32,
+  zfar: f32,
   rot_x: f32,
   rot_y: f32,
   rot_z: f32,
@@ -47,10 +49,12 @@ pub struct Tunable {
 impl Default for Tunable {
   fn default() -> Self {
     Self {
-      distance: 10.0,
+      distance: 20.0,
       fov: 100.0,
-      rot_x: 0.0,
-      rot_y: 0.0,
+      znear: -1.0,
+      zfar: -100.0,
+      rot_x: 0.1,
+      rot_y: 0.3,
       rot_z: 0.0,
       trans_x: 0.0,
       trans_y: 0.0,
@@ -78,6 +82,8 @@ impl RasterApp {
     let sliders = [
       (&mut t.distance, -10.0, 100.0, "Distance"),
       (&mut t.fov, 10.0, 180.0, "FoV"),
+      (&mut t.znear, -100.0, 100.0, "Z near"),
+      (&mut t.zfar, -100.0, 100.0, "Z far"),
       (&mut t.rot_x, -2.0 * PI, 2.0 * PI, "Rotation (X)"),
       (&mut t.rot_y, -2.0 * PI, 2.0 * PI, "Rotation (Y)"),
       (&mut t.rot_z, -2.0 * PI, 2.0 * PI, "Rotation (Z)"),
@@ -175,12 +181,16 @@ fn render_scene(tun: &Tunable, size: (usize, usize), scene: &Scene) -> Image {
 }
 
 fn sample_scene(tun: &Tunable) -> Scene {
-  let fov = tun.fov / 360.0 * 2.0 * PI;
-  let mut camera = Camera::new_perspective(16.0 / 9.0, fov, -50.0, -1.0);
-  let cam_rot = Matrix4::new_nonuniform_scaling(&Vector3::new(-1.0, 1.0, 1.0));
+  let fov = tun.fov / 360.0;
+  let zfar = if tun.znear == tun.zfar {
+    tun.znear + 1.0
+  } else {
+    tun.zfar
+  };
+  let mut camera = Camera::new_perspective(16.0 / 9.0, fov, tun.znear, zfar);
   let cam_trans =
     Matrix4::new_translation(&Vector3::new(0.0, 0.0, tun.distance));
-  camera.transform(&(cam_rot * cam_trans));
+  camera.transformd(&cam_trans);
 
   let mut scene = Scene::new(camera);
   let rotation = Vector3::new(tun.rot_x, tun.rot_y, tun.rot_z);
@@ -188,8 +198,8 @@ fn sample_scene(tun: &Tunable) -> Scene {
 
   scene.add_mesh(
     Mesh::new_cube()
-      .transformed(Matrix4::new_translation(&translation))
-      .transformed(Matrix4::new_rotation(rotation)),
+      .transformed(Matrix4::new_rotation(rotation))
+      .transformed(Matrix4::new_translation(&translation)),
   );
 
   // scene.add_mesh(Mesh::new_quad([

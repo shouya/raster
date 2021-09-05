@@ -90,7 +90,7 @@ impl Zbuffer {
     let len = size.0 * size.1;
     let mut buffer = Vec::with_capacity(len);
     for _ in 0..len {
-      buffer.push(99999.0);
+      buffer.push(10.0);
     }
 
     Self {
@@ -138,7 +138,7 @@ impl Zbuffer {
     for x in 0..self.width() {
       for y in 0..self.height() {
         let coords = (x as i32, y as i32);
-        let d = *self.depth(coords).unwrap();
+        let d = *self.depth(coords).unwrap() / 2.0;
         *img.pixel_mut(coords).unwrap() = COLOR::rgb(d, d, d);
       }
     }
@@ -148,7 +148,7 @@ impl Zbuffer {
 
 pub struct Camera {
   // world coordinate
-  transform: Matrix4<f32>,
+  inv_transform: Matrix4<f32>,
   perspective: Matrix4<f32>, // clipping_near: f32,
                              // clipping_far: f32
 }
@@ -161,21 +161,20 @@ impl Camera {
     zfar: f32,
   ) -> Self {
     let perspective = Matrix4::new_perspective(aspect, fovy, znear, zfar);
-    let transform = Matrix4::identity();
+    let inv_transform = Matrix4::identity();
     Self {
       perspective,
-      transform,
+      inv_transform,
     }
   }
 
   pub fn world_to_camera(&self, point: &Point3<f32>) -> Point3<f32> {
-    // xy: position
-    // z: depth
-    (self.perspective * self.transform).transform_point(point)
+    // xyz
+    (self.perspective * self.inv_transform).transform_point(point)
   }
 
-  pub fn transform(&mut self, trans: &Matrix4<f32>) {
-    self.transform *= trans;
+  pub fn transformd(&mut self, trans: &Matrix4<f32>) {
+    self.inv_transform *= trans.pseudo_inverse(0.0001).unwrap();
   }
 }
 
@@ -272,7 +271,7 @@ impl Mesh {
   }
 
   pub fn transformed(mut self, transform: Matrix4<f32>) -> Self {
-    self.transform = self.transform * transform;
+    self.transform = transform * self.transform;
     self
   }
 
@@ -463,8 +462,9 @@ impl Rasterizer {
 
   // checks the zbuffer
   fn draw_pixel(&mut self, depth: f32, coords: (i32, i32), color: Color) {
+    // beyond the camera clipping plane
     if let Some(d) = self.zbuffer.depth_mut(coords) {
-      if *d > depth {
+      if depth < *d {
         *d = depth;
         self.put_pixel(coords, color)
       }
@@ -491,7 +491,6 @@ impl Rasterizer {
   ) {
     let mut dx: i32 = p2.0 - p1.0;
     let mut dy: i32 = p2.1 - p1.1;
-    let mut dz: f32 = d2 - d1;
 
     if dx.abs() >= dy.abs() {
       if dx < 0 {
@@ -499,18 +498,18 @@ impl Rasterizer {
         mem::swap(&mut d1, &mut d2);
         dx = -dx;
         dy = -dy;
-        dz = -dz;
       }
 
       let x0 = p1.0;
       let y0 = p1.1;
       let z0 = d1;
-      let d = dy as f32 / dx as f32;
+      let dy = dy as f32 / dx as f32;
+      let dz = (d2 - d1) / dx as f32;
 
       for n in 0..dx {
         let x = x0 + n;
-        let y = y0 + (d * (n as f32)).round() as i32;
-        let z = z0 + dz * (n as f32);
+        let y = y0 + (dy * n as f32).round() as i32;
+        let z = z0 + dz * n as f32;
         self.draw_pixel(z, (x, y), COLOR::rgb(1.0, 0.0, 0.0));
       }
     } else {
@@ -519,18 +518,18 @@ impl Rasterizer {
         mem::swap(&mut d1, &mut d2);
         dx = -dx;
         dy = -dy;
-        dz = -dz;
       }
 
       let x0 = p1.0;
       let y0 = p1.1;
       let z0 = d1;
-      let d = dx as f32 / dy as f32;
+      let dx = dx as f32 / dy as f32;
+      let dz = (d2 - d1) / dy as f32;
 
       for n in 0..dy {
-        let x = x0 + (d * (n as f32)).round() as i32;
+        let x = x0 + (dx * n as f32).round() as i32;
         let y = y0 + n;
-        let z = z0 + dz * (n as f32);
+        let z = z0 + dz * n as f32;
         self.draw_pixel(z, (x, y), COLOR::rgb(1.0, 0.0, 0.0));
       }
     }

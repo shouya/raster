@@ -53,6 +53,18 @@ impl Image {
     self.dimension.1
   }
 
+  pub fn pixel(&self, coords: (i32, i32)) -> Option<&Color> {
+    if coords.0 < 0
+      || coords.1 < 0
+      || coords.0 >= self.width() as i32
+      || coords.1 >= self.height() as i32
+    {
+      return None;
+    }
+    let idx = coords.1 * self.width() as i32 + coords.0;
+    self.pixels.get(idx as usize)
+  }
+
   pub fn pixel_mut(&mut self, coords: (i32, i32)) -> Option<&mut Color> {
     if coords.0 < 0
       || coords.1 < 0

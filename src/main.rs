@@ -94,18 +94,32 @@ impl RasterApp {
 
     use RasterizerMode::*;
 
-    if (ui.radio_value(&mut t.mode, Shaded, "Shaded")).clicked() {
-      self.redraw = true;
-    }
-    if (ui.radio_value(&mut t.mode, Zbuffer, "Zbuffer")).clicked() {
-      self.redraw = true;
-    }
+    ui.horizontal(|ui| {
+      let t = &mut self.tunable;
+      if (ui.radio_value(&mut t.mode, Shaded, "Shaded")).clicked() {
+        self.redraw = true;
+      }
+      if (ui.radio_value(&mut t.mode, Zbuffer, "Zbuffer")).clicked() {
+        self.redraw = true;
+      }
+    });
   }
 
   fn draw_canvas(&self, ui: &mut egui::Ui) {
     let size = (self.texture_size.0 as f32, self.texture_size.1 as f32);
     if let Some(texture_id) = self.texture_handle {
-      ui.image(texture_id, size);
+      let resp = ui.image(texture_id, size);
+      let topleft = resp.rect.min;
+      if let Some(mut pos) = resp.hover_pos() {
+        pos -= topleft.to_vec2();
+        resp.on_hover_ui_at_pointer(|ui| {
+          let coords = (pos.x as i32, pos.y as i32);
+          ui.label(format!("{},{}", coords.0, coords.1));
+          if let Some(color) = self.image.as_ref().unwrap().pixel(coords) {
+            ui.label(format!("{:.2},{:.2},{:.2}", color.x, color.y, color.z));
+          }
+        });
+      }
     }
   }
 

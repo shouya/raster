@@ -1,17 +1,21 @@
 use std::f32::consts::PI;
 
-use eframe::{self, egui, epi};
+use eframe::{
+  self, egui,
+  epi::{self, TextureAllocator},
+};
 use nalgebra::{Matrix4, Point3, Vector2, Vector3};
 use raster::{Camera, Mesh, Rasterizer, RasterizerMode, Scene};
 
 mod raster;
 mod util;
 
-use crate::raster::{Image, Zbuffer};
+use crate::raster::Image;
 
 struct RasterApp {
   texture_size: (usize, usize),
   texture_handle: Option<egui::TextureId>,
+  image: Option<Image>,
   redraw: bool,
   tunable: Tunable,
 }
@@ -21,6 +25,7 @@ impl Default for RasterApp {
     Self {
       texture_size: (600, 400),
       texture_handle: None,
+      image: None,
       redraw: true,
       tunable: Tunable::default(),
     }
@@ -67,6 +72,66 @@ fn convert_texture(image: &Image) -> Vec<egui::Color32> {
   pixel_cache
 }
 
+impl RasterApp {
+  fn draw_tunables(&mut self, ui: &mut egui::Ui) {
+    let t = &mut self.tunable;
+    let sliders = [
+      (&mut t.distance, -10.0, 100.0, "Distance"),
+      (&mut t.fov, 10.0, 180.0, "FoV"),
+      (&mut t.rot_x, -2.0 * PI, 2.0 * PI, "Rotation (X)"),
+      (&mut t.rot_y, -2.0 * PI, 2.0 * PI, "Rotation (Y)"),
+      (&mut t.rot_z, -2.0 * PI, 2.0 * PI, "Rotation (Z)"),
+      (&mut t.trans_x, -5.0, 5.0, "Translation (X)"),
+      (&mut t.trans_y, -5.0, 5.0, "Translation (Y)"),
+      (&mut t.trans_z, -5.0, 5.0, "Translation (Z)"),
+    ];
+
+    for (v, mi, ma, t) in sliders {
+      if ui.add(egui::Slider::new(v, mi..=ma).text(t)).changed() {
+        self.redraw = true;
+      }
+    }
+
+    use RasterizerMode::*;
+
+    if (ui.radio_value(&mut t.mode, Shaded, "Shaded")).clicked() {
+      self.redraw = true;
+    }
+    if (ui.radio_value(&mut t.mode, Zbuffer, "Zbuffer")).clicked() {
+      self.redraw = true;
+    }
+  }
+
+  fn draw_canvas(&self, ui: &mut egui::Ui) {
+    let size = (self.texture_size.0 as f32, self.texture_size.1 as f32);
+    if let Some(texture_id) = self.texture_handle {
+      ui.image(texture_id, size);
+    }
+  }
+
+  fn redraw_texture(&mut self, tex_alloc: &mut dyn TextureAllocator) {
+    if !self.redraw && self.texture_handle.is_some() {
+      return;
+    }
+
+    let image = {
+      let scene = sample_scene(&self.tunable);
+      render_scene(&self.tunable, self.texture_size, &scene)
+    };
+
+    let texture_data = convert_texture(&image);
+    if let Some(texture_id) = self.texture_handle {
+      tex_alloc.free(texture_id);
+    }
+    let texture_id = tex_alloc
+      .alloc_srgba_premultiplied(self.texture_size, texture_data.as_slice());
+
+    self.texture_handle = Some(texture_id);
+    self.image = Some(image);
+    self.redraw = false;
+  }
+}
+
 impl epi::App for RasterApp {
   fn name(&self) -> &str {
     "Toy rasterizer"
@@ -74,58 +139,12 @@ impl epi::App for RasterApp {
 
   fn update(&mut self, ctx: &egui::CtxRef, frame: &mut epi::Frame) {
     egui::SidePanel::left("tunable").show(ctx, |ui| {
-      let t = &mut self.tunable;
-      let sliders = [
-        (&mut t.distance, -10.0, 100.0, "Distance"),
-        (&mut t.fov, 10.0, 180.0, "FoV"),
-        (&mut t.rot_x, -2.0 * PI, 2.0 * PI, "Rotation (X)"),
-        (&mut t.rot_y, -2.0 * PI, 2.0 * PI, "Rotation (Y)"),
-        (&mut t.rot_z, -2.0 * PI, 2.0 * PI, "Rotation (Z)"),
-        (&mut t.trans_x, -5.0, 5.0, "Translation (X)"),
-        (&mut t.trans_y, -5.0, 5.0, "Translation (Y)"),
-        (&mut t.trans_z, -5.0, 5.0, "Translation (Z)"),
-      ];
-
-      for (v, mi, ma, t) in sliders {
-        if ui.add(egui::Slider::new(v, mi..=ma).text(t)).changed() {
-          self.redraw = true;
-        }
-      }
-
-      use RasterizerMode::*;
-
-      if (ui.radio_value(&mut t.mode, Shaded, "Shaded")).clicked() {
-        self.redraw = true;
-      }
-      if (ui.radio_value(&mut t.mode, Zbuffer, "Zbuffer")).clicked() {
-        self.redraw = true;
-      }
+      self.draw_tunables(ui);
     });
 
     egui::CentralPanel::default().show(ctx, |ui| {
-      if self.texture_handle.is_none() || self.redraw {
-        let image = {
-          let scene = sample_scene(&self.tunable);
-          render_scene(&self.tunable, self.texture_size, &scene)
-        };
-
-        let texture_data = convert_texture(&image);
-        if let Some(texture_id) = self.texture_handle {
-          frame.tex_allocator().free(texture_id);
-        }
-        let texture_id = frame.tex_allocator().alloc_srgba_premultiplied(
-          self.texture_size,
-          texture_data.as_slice(),
-        );
-        self.texture_handle = Some(texture_id);
-        self.redraw = false;
-      }
-
-      if let Some(texture_id) = self.texture_handle {
-        let texture_size =
-          (self.texture_size.0 as f32, self.texture_size.1 as f32);
-        ui.image(texture_id, texture_size);
-      }
+      self.redraw_texture(frame.tex_allocator());
+      self.draw_canvas(ui);
     });
   }
 }

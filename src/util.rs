@@ -23,3 +23,7 @@ where
   }
   a
 }
+
+pub fn lerp(r: f32, a: f32, b: f32) -> f32 {
+  (b - a) * r + a
+}

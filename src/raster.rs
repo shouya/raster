@@ -6,7 +6,7 @@ use std::{
 
 use nalgebra::{Matrix4, Point2, Point3, Vector2, Vector3, Vector4};
 
-use crate::util::{point2_to_pixel, sorted_tuple3};
+use crate::util::{lerp, point2_to_pixel, sorted_tuple3};
 
 type Color = Vector4<f32>;
 
@@ -198,6 +198,10 @@ impl Triangle {
       (self.vertices[2], self.vertices[0]),
     ]
     .into_iter()
+  }
+
+  pub fn points(&self) -> [Point3<f32>; 3] {
+    self.vertices.clone()
   }
 }
 
@@ -392,6 +396,82 @@ impl Default for RasterizerMode {
   }
 }
 
+/// A point on screen with integer xy coordinates and floating depth (z)
+#[derive(PartialEq, Clone, Copy)]
+pub struct ScreenPt {
+  pub x: i32,
+  pub y: i32,
+  pub z: f32,
+}
+
+impl ScreenPt {
+  pub fn new(coords: (i32, i32), depth: f32) -> Self {
+    Self {
+      x: coords.0,
+      y: coords.1,
+      z: depth,
+    }
+  }
+  pub fn iter_horizontal<'a>(
+    p1: &'a Self,
+    p2: &'a Self,
+  ) -> impl Iterator<Item = Self> + 'a {
+    ScreenPtIterator::new_horizontal(p1, p2)
+  }
+
+  pub fn coords(&self) -> (i32, i32) {
+    (self.x, self.y)
+  }
+
+  pub fn depth(&self) -> f32 {
+    self.z
+  }
+}
+
+pub struct ScreenPtIterator<'a> {
+  start: &'a ScreenPt,
+  end: &'a ScreenPt,
+  curr: ScreenPt,
+  dx: i32,
+  dy: i32,
+  dz: f32,
+}
+
+impl<'a> Iterator for ScreenPtIterator<'a> {
+  type Item = ScreenPt;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    if self.curr.x == self.end.x && self.curr.y == self.end.y {
+      return None;
+    }
+
+    let curr = self.curr.clone();
+    self.curr.x += self.dx;
+    self.curr.y += self.dy;
+    self.curr.z += self.dz;
+    Some(curr)
+  }
+}
+
+impl<'a> ScreenPtIterator<'a> {
+  pub fn new_horizontal(start: &'a ScreenPt, end: &'a ScreenPt) -> Self {
+    assert!(start.y == end.y);
+    let dy = 0;
+    let dx = if start.x < end.x { 1 } else { -1 };
+    let steps = (end.x - start.x).abs();
+    let dz = (end.z - start.z) / steps as f32;
+    let curr = start.clone();
+    Self {
+      start,
+      curr,
+      end,
+      dx,
+      dy,
+      dz,
+    }
+  }
+}
+
 pub struct Rasterizer {
   mode: RasterizerMode,
   image: Image,
@@ -415,9 +495,23 @@ impl Rasterizer {
   }
 
   pub fn rasterize(&mut self, scene: &Scene) {
+    match self.mode {
+      RasterizerMode::Shaded => self.rasterize_shaded(scene),
+      RasterizerMode::Wireframe => self.rasterize_wireframe(scene),
+      RasterizerMode::Zbuffer => self.rasterize_shaded(scene),
+    }
+  }
+
+  pub fn rasterize_wireframe(&mut self, scene: &Scene) {
     let camera = scene.camera();
     for trig in scene.iter_triangles() {
-      self.draw_triangle(camera, &trig);
+      self.draw_triangle_wireframe(camera, &trig);
+    }
+  }
+  pub fn rasterize_shaded(&mut self, scene: &Scene) {
+    let camera = scene.camera();
+    for trig in scene.iter_triangles() {
+      self.fill_triangle(camera, &trig);
     }
   }
 
@@ -428,23 +522,15 @@ impl Rasterizer {
     }
   }
 
-  pub fn draw_triangle(&mut self, camera: &Camera, triangle: &Triangle) {
-    for (a, b) in triangle.edges() {
-      let (a, da) = self.world_to_screen(camera, &a);
-      let (b, db) = self.world_to_screen(camera, &b);
-      self.draw_line(a, da, b, db);
-    }
-  }
-
   // point and depth
   pub fn world_to_screen(
     &self,
     camera: &Camera,
     point: &Point3<f32>,
-  ) -> ((i32, i32), f32) {
+  ) -> ScreenPt {
     let pcam = camera.world_to_camera(&point);
     let pscr = self.camera_to_screen(pcam);
-    (pscr, pcam.z)
+    ScreenPt::new(pscr, pcam.z)
   }
 
   // note: the output may go out of screen
@@ -461,12 +547,12 @@ impl Rasterizer {
   }
 
   // checks the zbuffer
-  fn draw_pixel(&mut self, depth: f32, coords: (i32, i32), color: Color) {
+  fn draw_pixel(&mut self, p: &ScreenPt, color: Color) {
     // beyond the camera clipping plane
-    if let Some(d) = self.zbuffer.depth_mut(coords) {
-      if depth < *d {
-        *d = depth;
-        self.put_pixel(coords, color)
+    if let Some(d) = self.zbuffer.depth_mut(p.coords()) {
+      if p.depth() < *d {
+        *d = p.depth();
+        self.put_pixel(p.coords(), color)
       }
     }
   }
@@ -482,56 +568,162 @@ impl Rasterizer {
   //   triangle
   // }
 
-  fn draw_line(
-    &mut self,
-    mut p1: (i32, i32),
-    mut d1: f32,
-    mut p2: (i32, i32),
-    mut d2: f32,
-  ) {
-    let mut dx: i32 = p2.0 - p1.0;
-    let mut dy: i32 = p2.1 - p1.1;
+  fn draw_triangle_wireframe(&mut self, camera: &Camera, triangle: &Triangle) {
+    for (a, b) in triangle.edges() {
+      let pa = self.world_to_screen(camera, &a);
+      let pb = self.world_to_screen(camera, &b);
+      self.draw_line(pa, pb);
+    }
+  }
+
+  fn draw_line(&mut self, mut p1: ScreenPt, mut p2: ScreenPt) {
+    let mut dx: i32 = p2.x - p1.x;
+    let mut dy: i32 = p2.y - p1.y;
 
     if dx.abs() >= dy.abs() {
       if dx < 0 {
         mem::swap(&mut p1, &mut p2);
-        mem::swap(&mut d1, &mut d2);
         dx = -dx;
         dy = -dy;
       }
 
-      let x0 = p1.0;
-      let y0 = p1.1;
-      let z0 = d1;
+      let x0 = p1.x;
+      let y0 = p1.x;
+      let z0 = p1.z;
       let dy = dy as f32 / dx as f32;
-      let dz = (d2 - d1) / dx as f32;
+      let dz = (p2.z - p1.z) / dx as f32;
 
-      for n in 0..dx {
-        let x = x0 + n;
-        let y = y0 + (dy * n as f32).round() as i32;
-        let z = z0 + dz * n as f32;
-        self.draw_pixel(z, (x, y), COLOR::rgb(1.0, 0.0, 0.0));
+      for n in 0..=dx {
+        let p = ScreenPt {
+          x: x0 + n,
+          y: y0 + (dy * n as f32).round() as i32,
+          z: z0 + dz * n as f32,
+        };
+        self.draw_pixel(&p, COLOR::rgb(1.0, 0.0, 0.0));
       }
     } else {
       if dy < 0 {
         mem::swap(&mut p1, &mut p2);
-        mem::swap(&mut d1, &mut d2);
         dx = -dx;
         dy = -dy;
       }
 
-      let x0 = p1.0;
-      let y0 = p1.1;
-      let z0 = d1;
+      let x0 = p1.x;
+      let y0 = p1.y;
+      let z0 = p1.z;
       let dx = dx as f32 / dy as f32;
-      let dz = (d2 - d1) / dy as f32;
+      let dz = (p2.z - p1.z) / dy as f32;
 
-      for n in 0..dy {
-        let x = x0 + (dx * n as f32).round() as i32;
-        let y = y0 + n;
-        let z = z0 + dz * n as f32;
-        self.draw_pixel(z, (x, y), COLOR::rgb(1.0, 0.0, 0.0));
+      for n in 0..=dy {
+        let p = ScreenPt {
+          x: x0 + (dx * n as f32).round() as i32,
+          y: y0 + n,
+          z: z0 + dz * n as f32,
+        };
+        self.draw_pixel(&p, COLOR::rgb(1.0, 0.0, 0.0));
       }
+    }
+  }
+
+  // fill a triangle that is flat at bottom
+  fn fill_upper_triangle(
+    &mut self,
+    top: ScreenPt,
+    bottom_left: ScreenPt,
+    bottom_right: ScreenPt,
+  ) {
+    // ensure bottom is flat
+    assert!(bottom_left.y == bottom_right.y);
+    // ensure top is above bottom
+    assert!(top.y <= bottom_left.y);
+    // ensure bottom left is on the left
+    // assert!(bottom_left.x <= bottom_right.x);
+
+    let h = bottom_left.y - top.y;
+    // non-zero h
+    let hn0 = if h == 0 { 1.0 } else { h as f32 };
+    let dxl = (bottom_left.x - top.x) as f32 / hn0;
+    let dxr = (bottom_right.x - top.x) as f32 / hn0;
+    let dzl = (bottom_left.z - top.z) / hn0;
+    let dzr = (bottom_right.z - top.z) / hn0;
+    let y0 = top.y;
+    let x0 = top.x;
+    let z0 = top.z;
+
+    for n in 0..=h {
+      let y = y0 + n;
+      let xl = x0 + (dxl * n as f32).round() as i32;
+      let xr = x0 + (dxr * n as f32).round() as i32;
+      let zl = z0 + dzl * n as f32;
+      let zr = z0 + dzr * n as f32;
+      let pl = ScreenPt { y, x: xl, z: zl };
+      let pr = ScreenPt { y, x: xr, z: zr };
+      self.draw_horizontal_line(pl, pr);
+    }
+  }
+
+  fn fill_triangle(&mut self, camera: &Camera, triangle: &Triangle) {
+    let mut pts: Vec<ScreenPt> = triangle
+      .points()
+      .iter()
+      .map(|p| self.world_to_screen(camera, p))
+      .collect();
+
+    let [upper, _lower] =
+      Self::horizontally_split_triangle(pts.as_mut_slice().try_into().unwrap());
+
+    if let Some([a, b, c]) = upper {
+      self.fill_upper_triangle(a, b, c);
+    }
+
+    // if let Some([a, b, c]) = lower {
+    //   // self.fill_lower_triangle(a, b, c);
+    // }
+  }
+
+  //
+  fn horizontally_split_triangle(
+    pts: &mut [ScreenPt; 3],
+  ) -> [Option<[ScreenPt; 3]>; 2] {
+    pts.sort_unstable_by_key(|p| p.y);
+
+    if pts[0].y == pts[2].y {
+      // just a flat line
+      let upper_trig = [pts[0], pts[1], pts[2]];
+      return [Some(upper_trig), None];
+    }
+
+    if pts[0].y == pts[1].y {
+      // a lower triangle
+      let lower_trig = [pts[0], pts[1], pts[2]];
+      return [None, Some(lower_trig)];
+    }
+
+    if pts[1].y == pts[2].y {
+      // a lower triangle
+      let upper_trig = [pts[0], pts[1], pts[2]];
+      return [Some(upper_trig), None];
+    }
+
+    // a normal triangle that we need to split
+    let y = pts[1].y;
+    let r = y as f32 / (pts[2].y - pts[0].y) as f32;
+    let xl = ((pts[2].x - pts[0].x) as f32 * r).round() as i32;
+    let zl = (pts[2].z - pts[0].z) * r;
+    let xr = pts[1].x;
+    let zr = pts[1].z;
+
+    let ptl = ScreenPt { y, x: xl, z: zl };
+    let ptr = ScreenPt { y, x: xr, z: zr };
+    let upper_trig = [pts[0], ptl, ptr];
+    let lower_trig = [ptl, ptr, pts[2]];
+
+    [Some(upper_trig), Some(lower_trig)]
+  }
+
+  fn draw_horizontal_line(&mut self, p1: ScreenPt, p2: ScreenPt) {
+    for pt in ScreenPt::iter_horizontal(&p1, &p2) {
+      self.draw_pixel(&pt, COLOR::rgb(1.0, 0.0, 0.0))
     }
   }
 }

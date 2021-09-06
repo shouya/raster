@@ -98,10 +98,13 @@ impl RasterApp {
       }
     }
 
-    use RasterizerMode::*;
-
     ui.horizontal(|ui| {
+      use RasterizerMode::*;
+
       let t = &mut self.tunable;
+      if (ui.radio_value(&mut t.mode, Wireframe, "Wireframe")).clicked() {
+        self.redraw = true;
+      }
       if (ui.radio_value(&mut t.mode, Shaded, "Shaded")).clicked() {
         self.redraw = true;
       }

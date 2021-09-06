@@ -458,7 +458,7 @@ impl<'a> ScreenPtIterator<'a> {
     let dy = 0;
     let dx = if start.x < end.x { 1 } else { -1 };
     let steps = (end.x - start.x).abs();
-    let stepsn0 = if steps == 0 { 1.0 } else { steps as f32};
+    let stepsn0 = if steps == 0 { 1.0 } else { steps as f32 };
     let dz = (end.z - start.z) / stepsn0;
     let curr = start.clone();
     Self {
@@ -661,6 +661,42 @@ impl Rasterizer {
     }
   }
 
+  fn fill_lower_triangle(
+    &mut self,
+    top_left: ScreenPt,
+    top_right: ScreenPt,
+    bottom: ScreenPt,
+  ) {
+    // ensure top is flat
+    assert!(top_left.y == top_right.y);
+    // ensure top is above bottom
+    assert!(top_left.y <= bottom.y);
+    // ensure top left is on the left
+    // assert!(top_left.x <= right_right.x);
+
+    let h = bottom.y - top_left.y;
+    // non-zero h
+    let hn0 = if h == 0 { 1.0 } else { h as f32 };
+    let dxl = (bottom.x - top_left.x) as f32 / hn0;
+    let dxr = (bottom.x - top_right.x) as f32 / hn0;
+    let dzl = (bottom.z - top_left.z) / hn0;
+    let dzr = (bottom.z - top_right.z) / hn0;
+    let y0 = bottom.y;
+    let x0 = bottom.x;
+    let z0 = bottom.z;
+
+    for n in 0..=h {
+      let y = y0 - n;
+      let xl = x0 - (dxl * n as f32).round() as i32;
+      let xr = x0 - (dxr * n as f32).round() as i32;
+      let zl = z0 - dzl * n as f32;
+      let zr = z0 - dzr * n as f32;
+      let pl = ScreenPt { y, x: xl, z: zl };
+      let pr = ScreenPt { y, x: xr, z: zr };
+      self.draw_horizontal_line(pl, pr);
+    }
+  }
+
   fn fill_triangle(&mut self, camera: &Camera, triangle: &Triangle) {
     let mut pts: Vec<ScreenPt> = triangle
       .points()
@@ -668,16 +704,16 @@ impl Rasterizer {
       .map(|p| self.world_to_screen(camera, p))
       .collect();
 
-    let [upper, _lower] =
+    let [upper, lower] =
       Self::horizontally_split_triangle(pts.as_mut_slice().try_into().unwrap());
 
     if let Some([a, b, c]) = upper {
       self.fill_upper_triangle(a, b, c);
     }
 
-    // if let Some([a, b, c]) = lower {
-    //   // self.fill_lower_triangle(a, b, c);
-    // }
+    if let Some([a, b, c]) = lower {
+      self.fill_lower_triangle(a, b, c);
+    }
   }
 
   //

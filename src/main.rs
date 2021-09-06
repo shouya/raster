@@ -51,8 +51,8 @@ impl Default for Tunable {
     Self {
       distance: 20.0,
       fov: 100.0,
-      znear: -1.0,
-      zfar: -100.0,
+      znear: 1.0,
+      zfar: 10000.0,
       rot_x: 0.1,
       rot_y: 0.3,
       rot_z: 0.0,
@@ -82,8 +82,8 @@ impl RasterApp {
     let sliders = [
       (&mut t.distance, -10.0, 100.0, "Distance"),
       (&mut t.fov, 10.0, 180.0, "FoV"),
-      (&mut t.znear, -100.0, 100.0, "Z near"),
-      (&mut t.zfar, -100.0, 100.0, "Z far"),
+      (&mut t.znear, -10000.0, 10000.0, "Z near"),
+      (&mut t.zfar, -10000.0, 10000.0, "Z far"),
       (&mut t.rot_x, -2.0 * PI, 2.0 * PI, "Rotation (X)"),
       (&mut t.rot_y, -2.0 * PI, 2.0 * PI, "Rotation (Y)"),
       (&mut t.rot_z, -2.0 * PI, 2.0 * PI, "Rotation (Z)"),

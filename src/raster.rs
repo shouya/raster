@@ -397,7 +397,7 @@ impl Default for RasterizerMode {
 }
 
 /// A point on screen with integer xy coordinates and floating depth (z)
-#[derive(PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy, Debug)]
 pub struct ScreenPt {
   pub x: i32,
   pub y: i32,

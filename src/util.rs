@@ -27,3 +27,7 @@ where
 pub fn lerp(r: f32, a: f32, b: f32) -> f32 {
   (b - a) * r + a
 }
+
+pub fn lerp_int(r: f32, a: i32, b: i32) -> i32 {
+  a + ((b - a) as f32 * r).round() as i32
+}

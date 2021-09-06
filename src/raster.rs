@@ -6,7 +6,7 @@ use std::{
 
 use nalgebra::{Matrix4, Point2, Point3, Vector2, Vector3, Vector4};
 
-use crate::util::{lerp, point2_to_pixel, sorted_tuple3};
+use crate::util::{lerp, lerp_int, point2_to_pixel, sorted_tuple3};
 
 type Color = Vector4<f32>;
 
@@ -429,7 +429,6 @@ impl ScreenPt {
 }
 
 pub struct ScreenPtIterator<'a> {
-  start: &'a ScreenPt,
   end: &'a ScreenPt,
   curr: ScreenPt,
   dx: i32,
@@ -459,10 +458,10 @@ impl<'a> ScreenPtIterator<'a> {
     let dy = 0;
     let dx = if start.x < end.x { 1 } else { -1 };
     let steps = (end.x - start.x).abs();
-    let dz = (end.z - start.z) / steps as f32;
+    let stepsn0 = if steps == 0 { 1.0 } else { steps as f32};
+    let dz = (end.z - start.z) / stepsn0;
     let curr = start.clone();
     Self {
-      start,
       curr,
       end,
       dx,
@@ -588,7 +587,7 @@ impl Rasterizer {
       }
 
       let x0 = p1.x;
-      let y0 = p1.x;
+      let y0 = p1.y;
       let z0 = p1.z;
       let dy = dy as f32 / dx as f32;
       let dz = (p2.z - p1.z) / dx as f32;
@@ -707,14 +706,17 @@ impl Rasterizer {
 
     // a normal triangle that we need to split
     let y = pts[1].y;
-    let r = y as f32 / (pts[2].y - pts[0].y) as f32;
-    let xl = ((pts[2].x - pts[0].x) as f32 * r).round() as i32;
-    let zl = (pts[2].z - pts[0].z) * r;
+    let r = (pts[1].y - pts[0].y) as f32 / (pts[2].y - pts[0].y) as f32;
+    let xl = lerp_int(r, pts[0].x, pts[2].x);
+    let zl = lerp(r, pts[0].z, pts[2].z);
     let xr = pts[1].x;
     let zr = pts[1].z;
 
-    let ptl = ScreenPt { y, x: xl, z: zl };
-    let ptr = ScreenPt { y, x: xr, z: zr };
+    let mut ptl = ScreenPt { y, x: xl, z: zl };
+    let mut ptr = ScreenPt { y, x: xr, z: zr };
+    if ptr.x < ptl.x {
+      mem::swap(&mut ptr, &mut ptl);
+    }
     let upper_trig = [pts[0], ptl, ptr];
     let lower_trig = [ptl, ptr, pts[2]];
 

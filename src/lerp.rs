@@ -1,3 +1,5 @@
+use nalgebra::Point3;
+
 pub trait Lerp {
   fn lerp(&self, other: &Self, t: f32) -> Self;
 }
@@ -11,6 +13,16 @@ impl Lerp for f32 {
 impl Lerp for i32 {
   fn lerp(&self, other: &Self, t: f32) -> Self {
     self + ((other - self) as f32 * t).round() as Self
+  }
+}
+
+impl Lerp for Point3<f32> {
+  fn lerp(&self, other: &Self, t: f32) -> Self {
+    Point3::new(
+      lerp(t, &self.x, &other.x),
+      lerp(t, &self.y, &other.y),
+      lerp(t, &self.z, &other.z),
+    )
   }
 }
 
@@ -84,7 +96,6 @@ where
     curr: 0,
   }
 }
-
 
 pub fn lerp_closed_iter<'a, T>(
   from: &'a T,

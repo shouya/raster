@@ -4,12 +4,13 @@ use eframe::{
   self, egui,
   epi::{self, TextureAllocator},
 };
-use nalgebra::{Matrix4, Point3, Vector2, Vector3};
+use nalgebra::{Matrix4, Vector3};
 use raster::{Camera, Mesh, Rasterizer, RasterizerMode, Scene};
 
 mod raster;
 mod util;
 mod lerp;
+mod shader;
 
 use crate::raster::Image;
 

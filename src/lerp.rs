@@ -1,4 +1,4 @@
-pub(crate) trait Lerp {
+pub trait Lerp {
   fn lerp(&self, other: &Self, t: f32) -> Self;
 }
 
@@ -14,7 +14,7 @@ impl Lerp for i32 {
   }
 }
 
-pub(crate) struct Uniform<T> {
+pub struct Uniform<T> {
   pub value: T,
 }
 

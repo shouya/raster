@@ -1,4 +1,5 @@
 use std::{
+  cmp::max,
   collections::HashMap,
   convert::TryInto,
   mem::{self, swap},
@@ -7,7 +8,7 @@ use std::{
 use nalgebra::{Matrix4, Point2, Point3, Vector2, Vector3, Vector4};
 
 use crate::{
-  lerp::{lerp, Lerp},
+  lerp::{self, lerp, lerp_closed_iter, Lerp},
   util::{point2_to_pixel, sorted_tuple3},
 };
 
@@ -415,13 +416,6 @@ impl ScreenPt {
       z: depth,
     }
   }
-  pub fn iter_horizontal<'a>(
-    p1: &'a Self,
-    p2: &'a Self,
-  ) -> impl Iterator<Item = Self> + 'a {
-    ScreenPtIterator::new_horizontal(p1, p2)
-  }
-
   pub fn coords(&self) -> (i32, i32) {
     (self.x, self.y)
   }
@@ -549,52 +543,13 @@ impl Rasterizer {
     }
   }
 
-  fn draw_line(&mut self, mut p1: ScreenPt, mut p2: ScreenPt) {
-    let mut dx: i32 = p2.x - p1.x;
-    let mut dy: i32 = p2.y - p1.y;
+  fn draw_line(&mut self, p1: ScreenPt, p2: ScreenPt) {
+    let dx: i32 = p2.x - p1.x;
+    let dy: i32 = p2.y - p1.y;
+    let n = max(dx.abs(), dy.abs());
 
-    if dx.abs() >= dy.abs() {
-      if dx < 0 {
-        mem::swap(&mut p1, &mut p2);
-        dx = -dx;
-        dy = -dy;
-      }
-
-      let x0 = p1.x;
-      let y0 = p1.y;
-      let z0 = p1.z;
-      let dy = dy as f32 / dx as f32;
-      let dz = (p2.z - p1.z) / dx as f32;
-
-      for n in 0..=dx {
-        let p = ScreenPt {
-          x: x0 + n,
-          y: y0 + (dy * n as f32).round() as i32,
-          z: z0 + dz * n as f32,
-        };
-        self.draw_pixel(&p, COLOR::rgb(1.0, 0.0, 0.0));
-      }
-    } else {
-      if dy < 0 {
-        mem::swap(&mut p1, &mut p2);
-        dx = -dx;
-        dy = -dy;
-      }
-
-      let x0 = p1.x;
-      let y0 = p1.y;
-      let z0 = p1.z;
-      let dx = dx as f32 / dy as f32;
-      let dz = (p2.z - p1.z) / dy as f32;
-
-      for n in 0..=dy {
-        let p = ScreenPt {
-          x: x0 + (dx * n as f32).round() as i32,
-          y: y0 + n,
-          z: z0 + dz * n as f32,
-        };
-        self.draw_pixel(&p, COLOR::rgb(1.0, 0.0, 0.0));
-      }
+    for pt in lerp_closed_iter(&p1, &p2, n as usize) {
+      self.draw_pixel(&pt, COLOR::rgb(1.0, 0.0, 0.0));
     }
   }
 
@@ -612,26 +567,13 @@ impl Rasterizer {
     // ensure bottom left is on the left
     // assert!(bottom_left.x <= bottom_right.x);
 
-    let h = bottom_left.y - top.y;
-    // non-zero h
-    let hn0 = if h == 0 { 1.0 } else { h as f32 };
-    let dxl = (bottom_left.x - top.x) as f32 / hn0;
-    let dxr = (bottom_right.x - top.x) as f32 / hn0;
-    let dzl = (bottom_left.z - top.z) / hn0;
-    let dzr = (bottom_right.z - top.z) / hn0;
-    let y0 = top.y;
-    let x0 = top.x;
-    let z0 = top.z;
+    let h = (bottom_left.y - top.y) as usize;
 
-    for n in 0..=h {
-      let y = y0 + n;
-      let xl = x0 + (dxl * n as f32).round() as i32;
-      let xr = x0 + (dxr * n as f32).round() as i32;
-      let zl = z0 + dzl * n as f32;
-      let zr = z0 + dzr * n as f32;
-      let pl = ScreenPt { y, x: xl, z: zl };
-      let pr = ScreenPt { y, x: xr, z: zr };
-      self.draw_horizontal_line(pl, pr);
+    let left_pts_iter = lerp_closed_iter(&top, &bottom_left, h);
+    let right_pts_iter = lerp_closed_iter(&top, &bottom_right, h);
+
+    for (l, r) in left_pts_iter.zip(right_pts_iter) {
+      self.draw_horizontal_line(l, r)
     }
   }
 
@@ -648,26 +590,13 @@ impl Rasterizer {
     // ensure top left is on the left
     // assert!(top_left.x <= right_right.x);
 
-    let h = bottom.y - top_left.y;
+    let h = (bottom.y - top_left.y) as usize;
     // non-zero h
-    let hn0 = if h == 0 { 1.0 } else { h as f32 };
-    let dxl = (bottom.x - top_left.x) as f32 / hn0;
-    let dxr = (bottom.x - top_right.x) as f32 / hn0;
-    let dzl = (bottom.z - top_left.z) / hn0;
-    let dzr = (bottom.z - top_right.z) / hn0;
-    let y0 = bottom.y;
-    let x0 = bottom.x;
-    let z0 = bottom.z;
+    let left_pts_iter = lerp_closed_iter(&top_left, &bottom, h);
+    let right_pts_iter = lerp_closed_iter(&top_right, &bottom, h);
 
-    for n in 0..=h {
-      let y = y0 - n;
-      let xl = x0 - (dxl * n as f32).round() as i32;
-      let xr = x0 - (dxr * n as f32).round() as i32;
-      let zl = z0 - dzl * n as f32;
-      let zr = z0 - dzr * n as f32;
-      let pl = ScreenPt { y, x: xl, z: zl };
-      let pr = ScreenPt { y, x: xr, z: zr };
-      self.draw_horizontal_line(pl, pr);
+    for (l, r) in left_pts_iter.zip(right_pts_iter) {
+      self.draw_horizontal_line(l, r)
     }
   }
 
@@ -715,18 +644,10 @@ impl Rasterizer {
     }
 
     // a normal triangle that we need to split
-    let y = pts[1].y;
-    let r = (pts[1].y - pts[0].y) as f32 / (pts[2].y - pts[0].y) as f32;
-    let xl = lerp_int(r, pts[0].x, pts[2].x);
-    let zl = lerp(r, pts[0].z, pts[2].z);
-    let xr = pts[1].x;
-    let zr = pts[1].z;
+    let t = (pts[1].y - pts[0].y) as f32 / (pts[2].y - pts[0].y) as f32;
+    let ptl = lerp(t, &pts[0], &pts[2]);
+    let ptr = pts[1];
 
-    let mut ptl = ScreenPt { y, x: xl, z: zl };
-    let mut ptr = ScreenPt { y, x: xr, z: zr };
-    if ptr.x < ptl.x {
-      mem::swap(&mut ptr, &mut ptl);
-    }
     let upper_trig = [pts[0], ptl, ptr];
     let lower_trig = [ptl, ptr, pts[2]];
 
@@ -734,8 +655,9 @@ impl Rasterizer {
   }
 
   fn draw_horizontal_line(&mut self, p1: ScreenPt, p2: ScreenPt) {
-    for pt in ScreenPt::iter_horizontal(&p1, &p2) {
-      self.draw_pixel(&pt, COLOR::rgb(1.0, 0.0, 0.0))
+    let w = (p1.x - p2.x).abs() as usize;
+    for p in lerp_closed_iter(&p1, &p2, w) {
+      self.draw_pixel(&p, COLOR::rgb(1.0, 0.0, 0.0))
     }
   }
 }

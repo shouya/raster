@@ -5,7 +5,10 @@ use std::{
   mem::{self, swap},
 };
 
-use nalgebra::{Matrix4, Point2, Point3, Vector2, Vector3, Vector4};
+use nalgebra::{
+  Matrix4, Orthographic3, Point2, Point3, Projective3, Vector2, Vector3,
+  Vector4,
+};
 
 use crate::{
   lerp::{self, lerp, lerp_closed_iter, Lerp},
@@ -437,6 +440,7 @@ impl Lerp for ScreenPt {
 
 pub struct Rasterizer {
   mode: RasterizerMode,
+  screen_transform: Matrix4<f32>,
   image: Image,
   zbuffer: Zbuffer,
 }
@@ -446,10 +450,15 @@ impl Rasterizer {
     let image = Image::new(size);
     let zbuffer = Zbuffer::new(size);
     let mode = RasterizerMode::Shaded;
+    let screen_transform =
+      Orthographic3::new(0.0, size.0 as f32, size.1 as f32, 0.0, 0.0, 1.0)
+        .inverse();
+
     Self {
       image,
       zbuffer,
       mode,
+      screen_transform,
     }
   }
 
@@ -485,25 +494,17 @@ impl Rasterizer {
     }
   }
 
-  // point and depth
+  // note: the output may go out of screen
   pub fn world_to_screen(
     &self,
     camera: &Camera,
     point: &Point3<f32>,
   ) -> ScreenPt {
+    //
     // todo: fix the depth
     let pcam = camera.world_to_camera(&point);
-    let pscr = self.camera_to_screen(pcam);
-    ScreenPt::new(pscr, pcam.z)
-  }
-
-  // note: the output may go out of screen
-  pub fn camera_to_screen(&self, point: Point3<f32>) -> (i32, i32) {
-    let size = self.size();
-    let scale = Vector2::new(size.0 as f32, size.1 as f32);
-    let offset = Vector2::new(1.0, 1.0);
-    let mapped_point = (point.xy().coords + offset / 2.0).component_mul(&scale);
-    point2_to_pixel(&mapped_point.into())
+    let pscr = self.screen_transform.transform_point(&pcam);
+    ScreenPt::new((pscr.x as i32, pscr.y as i32), pscr.z)
   }
 
   pub fn size(&self) -> (usize, usize) {

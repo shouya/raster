@@ -67,6 +67,7 @@ where
 }
 
 // will not actually reach "to"
+#[allow(unused)]
 pub fn lerp_iter<'a, T>(
   from: &'a T,
   to: &'a T,
@@ -83,6 +84,7 @@ where
     curr: 0,
   }
 }
+
 
 pub fn lerp_closed_iter<'a, T>(
   from: &'a T,

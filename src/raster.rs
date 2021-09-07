@@ -6,7 +6,10 @@ use std::{
 
 use nalgebra::{Matrix4, Point2, Point3, Vector2, Vector3, Vector4};
 
-use crate::util::{lerp, lerp_int, point2_to_pixel, sorted_tuple3};
+use crate::{
+  lerp::{lerp, Lerp},
+  util::{point2_to_pixel, sorted_tuple3},
+};
 
 type Color = Vector4<f32>;
 
@@ -428,45 +431,12 @@ impl ScreenPt {
   }
 }
 
-pub struct ScreenPtIterator<'a> {
-  end: &'a ScreenPt,
-  curr: ScreenPt,
-  dx: i32,
-  dy: i32,
-  dz: f32,
-}
-
-impl<'a> Iterator for ScreenPtIterator<'a> {
-  type Item = ScreenPt;
-
-  fn next(&mut self) -> Option<Self::Item> {
-    if self.curr.x == self.end.x && self.curr.y == self.end.y {
-      return None;
-    }
-
-    let curr = self.curr.clone();
-    self.curr.x += self.dx;
-    self.curr.y += self.dy;
-    self.curr.z += self.dz;
-    Some(curr)
-  }
-}
-
-impl<'a> ScreenPtIterator<'a> {
-  pub fn new_horizontal(start: &'a ScreenPt, end: &'a ScreenPt) -> Self {
-    assert!(start.y == end.y);
-    let dy = 0;
-    let dx = if start.x < end.x { 1 } else { -1 };
-    let steps = (end.x - start.x).abs();
-    let stepsn0 = if steps == 0 { 1.0 } else { steps as f32 };
-    let dz = (end.z - start.z) / stepsn0;
-    let curr = start.clone();
-    Self {
-      curr,
-      end,
-      dx,
-      dy,
-      dz,
+impl Lerp for ScreenPt {
+  fn lerp(&self, other: &Self, t: f32) -> Self {
+    ScreenPt {
+      x: lerp(t, &self.x, &other.x),
+      y: lerp(t, &self.y, &other.y),
+      z: lerp(t, &self.z, &other.z),
     }
   }
 }
@@ -527,6 +497,7 @@ impl Rasterizer {
     camera: &Camera,
     point: &Point3<f32>,
   ) -> ScreenPt {
+    // todo: fix the depth
     let pcam = camera.world_to_camera(&point);
     let pscr = self.camera_to_screen(pcam);
     ScreenPt::new(pscr, pcam.z)
@@ -548,6 +519,9 @@ impl Rasterizer {
   // checks the zbuffer
   fn draw_pixel(&mut self, p: &ScreenPt, color: Color) {
     // beyond the camera clipping plane
+    if p.depth() < -1.0 || p.depth() > 1.0 {
+      return;
+    }
     if let Some(d) = self.zbuffer.depth_mut(p.coords()) {
       if p.depth() < *d {
         *d = p.depth();

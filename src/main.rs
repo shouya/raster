@@ -9,6 +9,7 @@ use raster::{Camera, Mesh, Rasterizer, RasterizerMode, Scene};
 
 mod raster;
 mod util;
+mod lerp;
 
 use crate::raster::Image;
 

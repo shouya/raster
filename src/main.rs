@@ -50,10 +50,10 @@ pub struct Tunable {
 impl Default for Tunable {
   fn default() -> Self {
     Self {
-      distance: 20.0,
+      distance: 5.0,
       fov: 100.0,
       znear: 1.0,
-      zfar: 15.0,
+      zfar: 1000.0,
       rot_x: 0.1,
       rot_y: 0.3,
       rot_z: 0.0,
@@ -185,12 +185,14 @@ fn render_scene(tun: &Tunable, size: (usize, usize), scene: &Scene) -> Image {
 }
 
 fn sample_scene(tun: &Tunable) -> Scene {
-  let fov = tun.fov / 360.0;
+  let fov = tun.fov / 360.0 * PI;
   let zfar = if tun.znear == tun.zfar {
+    // avoid znear == zfar
     tun.znear + 1.0
   } else {
     tun.zfar
   };
+
   let mut camera = Camera::new_perspective(16.0 / 9.0, fov, tun.znear, zfar);
   let cam_trans =
     Matrix4::new_translation(&Vector3::new(0.0, 0.0, tun.distance));

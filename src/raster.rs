@@ -145,7 +145,7 @@ impl Zbuffer {
     for x in 0..self.width() {
       for y in 0..self.height() {
         let coords = (x as i32, y as i32);
-        let d = *self.depth(coords).unwrap() / 2.0;
+        let d = *self.depth(coords).unwrap();
         *img.pixel_mut(coords).unwrap() = COLOR::rgb(d, d, d);
       }
     }
@@ -156,8 +156,7 @@ impl Zbuffer {
 pub struct Camera {
   // world coordinate
   inv_transform: Matrix4<f32>,
-  perspective: Matrix4<f32>, // clipping_near: f32,
-                             // clipping_far: f32
+  perspective: Matrix4<f32>,
 }
 
 impl Camera {
@@ -176,8 +175,11 @@ impl Camera {
   }
 
   pub fn world_to_camera(&self, point: &Point3<f32>) -> Point3<f32> {
-    // xyz
-    (self.perspective * self.inv_transform).transform_point(point)
+    // x,y,z^-1
+    let relative_world = self.inv_transform.transform_point(&point);
+    let mut point = self.perspective.transform_point(&relative_world);
+    point.z = 1.0 / point.z;
+    point
   }
 
   pub fn transformd(&mut self, trans: &Matrix4<f32>) {
@@ -451,7 +453,7 @@ impl Rasterizer {
     let zbuffer = Zbuffer::new(size);
     let mode = RasterizerMode::Shaded;
     let screen_transform =
-      Orthographic3::new(0.0, size.0 as f32, size.1 as f32, 0.0, 0.0, 1.0)
+      Orthographic3::new(0.0, size.0 as f32, size.1 as f32, 0.0, 1.0, 0.0)
         .inverse();
 
     Self {
@@ -504,7 +506,7 @@ impl Rasterizer {
     // todo: fix the depth
     let pcam = camera.world_to_camera(&point);
     let pscr = self.screen_transform.transform_point(&pcam);
-    ScreenPt::new((pscr.x as i32, pscr.y as i32), pscr.z)
+    ScreenPt::new((pscr.x as i32, pscr.y as i32), 1.0 - pscr.z)
   }
 
   pub fn size(&self) -> (usize, usize) {
@@ -514,7 +516,7 @@ impl Rasterizer {
   // checks the zbuffer
   fn draw_pixel(&mut self, p: &ScreenPt, color: Color) {
     // beyond the camera clipping plane
-    if p.depth() < -1.0 || p.depth() > 1.0 {
+    if p.depth() < 0.0 || p.depth() > 1.0 {
       return;
     }
     if let Some(d) = self.zbuffer.depth_mut(p.coords()) {
@@ -665,10 +667,23 @@ impl Rasterizer {
 
 #[cfg(test)]
 mod test {
+  use std::f32::consts::PI;
+
   use super::*;
 
   #[test]
   fn test_camera() {
+    let aspect = 16.0 / 9.0;
+    let fov = 130.0 / 180.0 * PI;
+    let znear = 1.0;
+    let zfar = 10.0;
+    let perspective = Matrix4::new_perspective(aspect, fov, znear, zfar);
+    for z in -10..10 {
+      let pt = Point3::new(1.0, 2.0, z as f32);
+      dbg!(z);
+      dbg!(1.0 / perspective.transform_point(&pt).z);
+    }
+
     assert!(false);
   }
 }

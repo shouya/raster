@@ -1,10 +1,12 @@
 use std::{cmp::max, collections::HashMap, convert::TryInto, mem};
 
-use nalgebra::{Matrix4, Orthographic3, Point3, Vector2, Vector4};
+use nalgebra::{
+  Matrix4, Norm, Orthographic3, Point3, Unit, Vector2, Vector3, Vector4,
+};
 
 use crate::{
   lerp::{lerp, lerp_closed_iter, Lerp},
-  shader::{PureColor, Shader, ShaderContext},
+  shader::{DiffuseShader, PureColor, Shader, ShaderContext},
   util::sorted_tuple3,
 };
 
@@ -206,7 +208,7 @@ impl Triangle {
     .into_iter()
   }
 
-  pub fn points(&self) -> [Point3<f32>; 3] {
+  pub fn vertices(&self) -> [Point3<f32>; 3] {
     self.vertices.clone()
   }
 }
@@ -221,11 +223,18 @@ pub struct Mesh {
 
 impl Mesh {
   pub fn new() -> Self {
+    // let shader = PureColor::new(COLOR::rgba(1.0, 0.0, 0.0, 0.0));
+    let shader = DiffuseShader::new(
+      COLOR::rgba(1.0, 0.0, 0.0, 0.0),
+      COLOR::rgba(1.0, 1.0, 1.0, 1.0),
+      Point3::new(-5.0, 10.0, 0.0),
+    );
+
     Self {
       transform: Matrix4::identity(),
       vertices: Default::default(),
       edges: Default::default(),
-      shader: Box::new(PureColor::new(COLOR::rgba(1.0, 0.0, 0.0, 0.0))),
+      shader: Box::new(shader),
     }
   }
 
@@ -408,6 +417,7 @@ impl Default for RasterizerMode {
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub struct ScreenPt {
   pub point: Point3<f32>,
+  pub normal: Unit<Vector3<f32>>,
   pub color: Color,
   pub uv: Vector2<f32>,
 }
@@ -418,6 +428,7 @@ impl ScreenPt {
       point,
       color: COLOR::rgba(1.0, 0.0, 0.0, 1.0),
       uv: Vector2::new(0.0, 0.0),
+      normal: Unit::new_normalize(point.coords),
     }
   }
 
@@ -449,6 +460,7 @@ impl Lerp for ScreenPt {
   fn lerp(&self, other: &Self, t: f32) -> Self {
     ScreenPt {
       point: lerp(t, &self.point, &other.point),
+      normal: self.normal.slerp(&other.normal, t),
       color: self.color.lerp(&other.color, t),
       uv: self.uv.lerp(&other.uv, t),
     }
@@ -457,7 +469,7 @@ impl Lerp for ScreenPt {
 
 pub struct Rasterizer {
   mode: RasterizerMode,
-  screen_transform: Matrix4<f32>,
+  view: Matrix4<f32>,
   image: Image,
   zbuffer: Zbuffer,
 }
@@ -467,15 +479,15 @@ impl Rasterizer {
     let image = Image::new(size);
     let zbuffer = Zbuffer::new(size);
     let mode = RasterizerMode::Shaded;
-    let screen_transform =
-      Orthographic3::new(0.0, size.0 as f32, size.1 as f32, 0.0, 1.0, 0.0)
+    let view =
+      Orthographic3::new(0.0, size.0 as f32, size.1 as f32, 0.0, 0.0, -1.0)
         .inverse();
 
     Self {
       image,
       zbuffer,
       mode,
-      screen_transform,
+      view,
     }
   }
 
@@ -534,7 +546,7 @@ impl Rasterizer {
     //
     // todo: fix the depth
     let pcam = camera.world_to_camera(&point);
-    let pscr = self.screen_transform.transform_point(&pcam);
+    let pscr = self.view.transform_point(&pcam);
     ScreenPt::new(pscr)
   }
 
@@ -550,9 +562,9 @@ impl Rasterizer {
     shader: &dyn Shader,
   ) {
     // beyond the camera clipping plane
-    if p.depth() < 0.0 || p.depth() > 1.0 {
-      return;
-    }
+    // if p.depth() < 0.0 || p.depth() > 1.0 {
+    //   return;
+    // }
     match self.zbuffer.depth(p.coords()) {
       None => return,
       Some(d) if p.depth() > *d => return,
@@ -584,37 +596,35 @@ impl Rasterizer {
     shader: &dyn Shader,
   ) {
     let context = ShaderContext {
-      view: self.screen_transform.clone(),
+      view: self.view.clone(),
       camera: camera.matrix(),
       model: model.clone(),
     };
 
     let mut pts: Vec<ScreenPt> = Vec::new();
-    for point in triangle.points() {
+    for point in triangle.vertices() {
       let mut pt = ScreenPt::new(point);
       shader.vertex(&context, &mut pt);
       pts.push(pt);
     }
 
-    let edges = [(pts[0], pts[1]), (pts[1], pts[2]), (pts[2], pts[0])];
-
-    for (a, b) in edges {
-      self.draw_line(a, b, &context, shader);
-    }
+    self.draw_line(&pts[1], &pts[2], &context, shader);
+    self.draw_line(&pts[2], &pts[0], &context, shader);
+    self.draw_line(&pts[0], &pts[1], &context, shader);
   }
 
   fn draw_line(
     &mut self,
-    p1: ScreenPt,
-    p2: ScreenPt,
+    p1: &ScreenPt,
+    p2: &ScreenPt,
     context: &ShaderContext,
     shader: &dyn Shader,
   ) {
-    let dx = (p2.x() - p1.x()).round() as i32;
-    let dy = (p2.y() - p1.y()).round() as i32;
+    let dx = p2.x_int() - p1.x_int();
+    let dy = p2.y_int() - p1.y_int();
     let n = max(dx.abs(), dy.abs());
 
-    for pt in lerp_closed_iter(&p1, &p2, n as usize) {
+    for pt in lerp_closed_iter(p1, p2, n as usize) {
       self.draw_pixel(&pt, context, shader);
     }
   }
@@ -678,22 +688,22 @@ impl Rasterizer {
     shader: &dyn Shader,
   ) {
     let context = ShaderContext {
-      view: self.screen_transform.clone(),
+      view: self.view.clone(),
       camera: camera.matrix(),
       model: model.clone(),
     };
     let mut pts: Vec<ScreenPt> = Vec::new();
 
-    for point in triangle.points() {
+    for point in triangle.vertices() {
       let mut pt = ScreenPt::new(point);
       shader.vertex(&context, &mut pt);
       pts.push(pt);
     }
 
-    if pts.iter().all(|p| self.invisible(p)) {
-      // all out of range or occluded by closer objects
-      return;
-    }
+    // if pts.iter().all(|p| self.invisible(p)) {
+    //   // all out of range or occluded by closer objects
+    //   return;
+    // }
 
     let [upper, lower] =
       Self::horizontally_split_triangle(pts.as_mut_slice().try_into().unwrap());

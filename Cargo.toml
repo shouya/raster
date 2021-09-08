@@ -4,5 +4,6 @@ version = "0.1.0"
 edition = "2018"
 
 [dependencies]
+anyhow = "1.0.43"
 eframe = "0.14.0"
 nalgebra = "0.29.0"

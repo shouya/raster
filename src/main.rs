@@ -1,4 +1,4 @@
-use std::f32::consts::PI;
+use std::{f32::consts::PI, path::Path};
 
 use eframe::{
   self, egui,
@@ -6,11 +6,13 @@ use eframe::{
 };
 use nalgebra::{Matrix4, Vector3};
 use raster::{Camera, Mesh, Rasterizer, RasterizerMode, Scene};
+use wavefront::Wavefront;
 
-mod raster;
-mod util;
 mod lerp;
+mod raster;
 mod shader;
+mod util;
+mod wavefront;
 
 use crate::raster::Image;
 
@@ -203,8 +205,11 @@ fn sample_scene(tun: &Tunable) -> Scene {
   let rotation = Vector3::new(tun.rot_x, tun.rot_y, tun.rot_z);
   let translation = Vector3::new(tun.trans_x, tun.trans_y, tun.trans_z);
 
+  let wavefront =
+    Wavefront::from_file(Path::new("assets/icosphere.obj")).unwrap();
+
   scene.add_mesh(
-    Mesh::new_cube()
+    Mesh::new_wavefront(wavefront)
       .transformed(Matrix4::new_rotation(rotation))
       .transformed(Matrix4::new_translation(&translation)),
   );

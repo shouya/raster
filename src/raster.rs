@@ -1,13 +1,14 @@
 use std::{cmp::max, collections::HashMap, convert::TryInto, mem};
 
 use nalgebra::{
-  Matrix4, Norm, Orthographic3, Point3, Unit, Vector2, Vector3, Vector4,
+  Matrix4, Norm, Orthographic3, Point2, Point3, Unit, Vector2, Vector3, Vector4,
 };
 
 use crate::{
   lerp::{lerp, lerp_closed_iter, Lerp},
   shader::{DiffuseShader, PureColor, Shader, ShaderContext},
   util::sorted_tuple3,
+  wavefront::Wavefront,
 };
 
 pub type Color = Vector4<f32>;
@@ -23,6 +24,7 @@ pub(crate) mod COLOR {
   }
 }
 
+#[derive(Debug, Clone)]
 pub struct Image {
   dimension: (usize, usize),
   pixels: Vec<Color>,
@@ -80,6 +82,7 @@ impl Image {
   }
 }
 
+#[derive(Debug, Clone)]
 pub struct Zbuffer {
   dimension: (usize, usize),
   // -1: unoccupied
@@ -148,6 +151,7 @@ impl Zbuffer {
   }
 }
 
+#[derive(Debug, Clone)]
 pub struct Camera {
   // world coordinate
   inv_transform: Matrix4<f32>,
@@ -186,38 +190,160 @@ impl Camera {
   }
 }
 
-pub struct Triangle {
-  vertices: [Point3<f32>; 3],
+#[derive(Debug, Clone)]
+pub struct Triangle<'a> {
+  vertices: [&'a PolyVertRef<'a>; 3],
 }
 
-impl From<(Point3<f32>, Point3<f32>, Point3<f32>)> for Triangle {
-  fn from(tup: (Point3<f32>, Point3<f32>, Point3<f32>)) -> Self {
-    Self {
-      vertices: [tup.0, tup.1, tup.2],
-    }
+impl<'a> From<[&'a PolyVertRef<'a>; 3]> for Triangle<'a> {
+  fn from(vertices: [&'a PolyVertRef<'a>; 3]) -> Self {
+    Self { vertices }
   }
 }
 
-impl Triangle {
-  pub fn edges(&self) -> impl Iterator<Item = (Point3<f32>, Point3<f32>)> + '_ {
+impl<'a> Triangle<'a> {
+  pub fn edges(&self) -> impl Iterator<Item = (ScreenPt, ScreenPt)> + '_ {
     vec![
-      (self.vertices[0], self.vertices[1]),
-      (self.vertices[1], self.vertices[2]),
-      (self.vertices[2], self.vertices[0]),
+      (
+        ScreenPt::from(self.vertices[0]),
+        ScreenPt::from(self.vertices[1]),
+      ),
+      (
+        ScreenPt::from(self.vertices[1]),
+        ScreenPt::from(self.vertices[2]),
+      ),
+      (
+        ScreenPt::from(self.vertices[2]),
+        ScreenPt::from(self.vertices[0]),
+      ),
     ]
     .into_iter()
   }
 
-  pub fn vertices(&self) -> [Point3<f32>; 3] {
-    self.vertices.clone()
+  pub fn vertices(&self) -> [ScreenPt; 3] {
+    [
+      ScreenPt::from(self.vertices[0]),
+      ScreenPt::from(self.vertices[1]),
+      ScreenPt::from(self.vertices[2]),
+    ]
+  }
+}
+
+#[derive(Debug, Clone)]
+pub struct Face {
+  vertices: Vec<PolyVert>,
+}
+
+impl Face {
+  pub fn new() -> Face {
+    Face {
+      vertices: Vec::new(),
+    }
+  }
+  pub fn from_vert(vertices: Vec<PolyVert>) -> Face {
+    Face { vertices }
+  }
+
+  pub fn add_vert(&mut self, v: PolyVert) {
+    self.vertices.push(v);
+  }
+
+  pub fn vertices(&self) -> &[PolyVert] {
+    self.vertices.as_ref()
+  }
+}
+
+#[derive(Debug, Clone)]
+pub struct PolyVert {
+  vertex_index: usize,
+  texture_index: Option<usize>,
+  normal_index: Option<usize>,
+}
+
+impl PolyVert {
+  pub fn new(vertex_index: usize) -> Self {
+    Self {
+      vertex_index,
+      texture_index: None,
+      normal_index: None,
+    }
+  }
+
+  pub fn new_texture(vertex_index: usize, texture_index: usize) -> Self {
+    Self {
+      vertex_index,
+      texture_index: Some(texture_index),
+      normal_index: None,
+    }
+  }
+
+  pub fn new_normal(vertex_index: usize, normal_index: usize) -> Self {
+    Self {
+      vertex_index,
+      normal_index: Some(normal_index),
+      texture_index: None,
+    }
+  }
+
+  pub fn new_texture_normal(
+    vertex_index: usize,
+    texture_index: usize,
+    normal_index: usize,
+  ) -> Self {
+    Self {
+      vertex_index,
+      texture_index: Some(texture_index),
+      normal_index: Some(normal_index),
+    }
+  }
+}
+
+#[derive(Debug, Clone)]
+pub struct FaceRef<'a> {
+  vertices: Vec<PolyVertRef<'a>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PolyVertRef<'a> {
+  pub vertex: &'a Point3<f32>,
+  pub texture_coords: Option<&'a Vector2<f32>>,
+  pub normal: Option<&'a Vector3<f32>>,
+}
+
+impl<'a> FaceRef<'a> {
+  pub fn new() -> Self {
+    Self {
+      vertices: Vec::new(),
+    }
+  }
+
+  pub fn add_vert(&mut self, v: PolyVertRef<'a>) {
+    self.vertices.push(v);
+  }
+
+  pub fn triangles(&self) -> impl Iterator<Item = Triangle> + '_ {
+    assert!(self.vertices.len() >= 3);
+
+    let mut res = Vec::new();
+    let n = self.vertices.len();
+
+    for i in 0..(n - 2) {
+      let v1 = &self.vertices[i];
+      let v2 = &self.vertices[i + 1];
+      let v3 = &self.vertices[(i + 2) % n];
+      res.push(Triangle::from([v1, v2, v3]));
+    }
+
+    res.into_iter()
   }
 }
 
 pub struct Mesh {
   transform: Matrix4<f32>,
   vertices: Vec<Point3<f32>>,
-  // every edge (a,b) must have a < b
-  edges: HashMap<usize, Vec<usize>>,
+  vertex_normals: Vec<Vector3<f32>>,
+  texture_coords: Vec<Vector2<f32>>,
+  faces: Vec<Face>,
   shader: Box<dyn Shader>,
 }
 
@@ -233,144 +359,53 @@ impl Mesh {
     Self {
       transform: Matrix4::identity(),
       vertices: Default::default(),
-      edges: Default::default(),
+      vertex_normals: Default::default(),
+      texture_coords: Default::default(),
+      faces: Vec::new(),
       shader: Box::new(shader),
     }
   }
 
-  pub fn new_trig(vertices: [Point3<f32>; 3]) -> Self {
-    let mut mesh = Self::new();
-    mesh.add_trig(&vertices);
-    mesh
+  pub fn new_wavefront(wf: Wavefront) -> Self {
+    let shader = DiffuseShader::new(
+      COLOR::rgba(1.0, 0.0, 0.0, 0.0),
+      COLOR::rgba(1.0, 1.0, 1.0, 1.0),
+      Point3::new(-5.0, 10.0, 0.0),
+    );
+
+    Self {
+      transform: Matrix4::identity(),
+      vertices: wf.vertices,
+      vertex_normals: wf.vertex_normals,
+      texture_coords: wf.texture_coords,
+      faces: wf.faces,
+      shader: Box::new(shader),
+    }
   }
 
-  // a square with side length 2 on xy plane
-  pub fn new_square() -> Self {
-    let mut mesh = Self::new();
-    let vertices: [Point3<f32>; 4] = [
-      // top left
-      [-1.0, 1.0, 0.0].into(),
-      // bottom left
-      [-1.0, -1.0, 0.0].into(),
-      // bottom right
-      [1.0, 1.0, 0.0].into(),
-      // top right
-      [1.0, -1.0, 0.0].into(),
-    ];
-    mesh.add_trig(&vertices[0..3].try_into().unwrap());
-    mesh.add_trig(&vertices[1..4].try_into().unwrap());
-    mesh
+  pub fn faces(&self) -> impl Iterator<Item = FaceRef<'_>> {
+    self.faces.iter().map(move |f| self.get_face(f))
   }
 
-  // a cube with side length 2
-  pub fn new_cube() -> Self {
-    let mut mesh = Self::new();
-    let v: [Point3<f32>; 8] = [
-      [1.0, 1.0, 1.0].into(),    // 0
-      [1.0, 1.0, -1.0].into(),   // 1
-      [1.0, -1.0, -1.0].into(),  // 2
-      [1.0, -1.0, 1.0].into(),   // 3
-      [-1.0, -1.0, 1.0].into(),  // 4
-      [-1.0, -1.0, -1.0].into(), // 5
-      [-1.0, 1.0, -1.0].into(),  // 6
-      [-1.0, 1.0, 1.0].into(),   // 7
-    ];
+  pub fn get_face(&self, face: &Face) -> FaceRef<'_> {
+    let mut res = FaceRef::new();
+    for vert in face.vertices() {
+      let vertex = &self.vertices[vert.vertex_index];
+      let texture_coords = vert.texture_index.map(|i| &self.texture_coords[i]);
+      let normal = vert.normal_index.map(|i| &self.vertex_normals[i]);
 
-    // front
-    mesh.add_quad(&[v[0], v[3], v[7], v[4]]);
-    // back
-    mesh.add_quad(&[v[1], v[2], v[6], v[5]]);
-    // top
-    mesh.add_quad(&[v[0], v[1], v[7], v[6]]);
-    // bottom
-    mesh.add_quad(&[v[2], v[3], v[5], v[4]]);
-    // left
-    mesh.add_quad(&[v[4], v[5], v[7], v[6]]);
-    // right
-    mesh.add_quad(&[v[0], v[1], v[3], v[2]]);
-    mesh
+      res.add_vert(PolyVertRef {
+        vertex,
+        texture_coords,
+        normal,
+      })
+    }
+    res
   }
 
   pub fn transformed(mut self, transform: Matrix4<f32>) -> Self {
     self.transform = transform * self.transform;
     self
-  }
-
-  pub fn iter_triangles(&self) -> impl Iterator<Item = Triangle> + '_ {
-    let v = move |i| self.transform.transform_point(&self.vertices[i]);
-    self
-      .edges
-      .keys()
-      .flat_map(move |i| self.triangles_from_vert(*i))
-      .map(move |(a, b, c)| (v(a), v(b), v(c)).into())
-  }
-
-  fn triangles_from_vert(
-    &self,
-    i: usize,
-  ) -> impl Iterator<Item = (usize, usize, usize)> + '_ {
-    self.edges[&i].iter().flat_map(move |a| {
-      self.edges[&i].iter().flat_map(move |b| {
-        if b <= a {
-          vec![].into_iter()
-        } else if self.has_edge(*a, *b) {
-          let trig = sorted_tuple3((i, *a, *b)).into();
-          vec![trig].into_iter()
-        } else {
-          vec![].into_iter()
-        }
-      })
-    })
-  }
-
-  fn has_edge(&self, mut a: usize, mut b: usize) -> bool {
-    if a == b {
-      return false;
-    }
-    if a > b {
-      mem::swap(&mut a, &mut b);
-    }
-    if !self.edges.contains_key(&a) {
-      return false;
-    }
-    self.edges[&a].binary_search(&b).is_ok()
-  }
-
-  fn add_trig(&mut self, trig: &[Point3<f32>; 3]) {
-    let a_idx = self.add_vert(trig[0]);
-    let b_idx = self.add_vert(trig[1]);
-    let c_idx = self.add_vert(trig[2]);
-    self.add_edge(a_idx, b_idx);
-    self.add_edge(b_idx, c_idx);
-    self.add_edge(c_idx, a_idx);
-  }
-
-  fn add_quad(&mut self, quad: &[Point3<f32>; 4]) {
-    self.add_trig(&[quad[0], quad[1], quad[2]]);
-    self.add_trig(&[quad[1], quad[2], quad[3]]);
-  }
-
-  fn add_vert(&mut self, p: Point3<f32>) -> usize {
-    if let Some(i) = self.vertices.iter().position(|x| *x == p) {
-      return i;
-    }
-
-    let i = self.vertices.len();
-    self.vertices.push(p);
-    i
-  }
-
-  fn add_edge(&mut self, mut a: usize, mut b: usize) {
-    assert!(a < self.vertices.len());
-    assert!(b < self.vertices.len());
-    if a > b {
-      mem::swap(&mut a, &mut b);
-    }
-    let pts = self.edges.entry(a).or_default();
-    match pts.binary_search(&b) {
-      Ok(_i) => return,
-      Err(i) => pts.insert(i, b),
-    }
   }
 }
 
@@ -417,9 +452,22 @@ impl Default for RasterizerMode {
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub struct ScreenPt {
   pub point: Point3<f32>,
-  pub normal: Unit<Vector3<f32>>,
   pub color: Color,
+  pub normal: Unit<Vector3<f32>>,
   pub uv: Vector2<f32>,
+}
+
+impl<'a> From<&PolyVertRef<'a>> for ScreenPt {
+  fn from(v: &PolyVertRef<'a>) -> Self {
+    let mut pt = Self::new(*v.vertex);
+    if let Some(uv) = v.texture_coords {
+      pt.set_uv(*uv);
+    }
+    if let Some(normal) = v.normal {
+      pt.set_normal(*normal);
+    }
+    pt
+  }
 }
 
 impl ScreenPt {
@@ -430,6 +478,14 @@ impl ScreenPt {
       uv: Vector2::new(0.0, 0.0),
       normal: Unit::new_normalize(point.coords),
     }
+  }
+
+  pub fn set_uv(&mut self, uv: Vector2<f32>) {
+    self.uv = uv;
+  }
+
+  pub fn set_normal(&mut self, normal: Vector3<f32>) {
+    self.normal = Unit::new_normalize(normal);
   }
 
   pub fn x(&self) -> f32 {
@@ -506,26 +562,30 @@ impl Rasterizer {
   pub fn rasterize_wireframe(&mut self, scene: &Scene) {
     let camera = scene.camera();
     for mesh in scene.iter_meshes() {
-      for trig in mesh.iter_triangles() {
-        self.draw_triangle_wireframe(
-          camera,
-          &trig,
-          &mesh.transform,
-          mesh.shader.as_ref(),
-        );
+      for face in mesh.faces() {
+        for trig in face.triangles() {
+          self.draw_triangle_wireframe(
+            camera,
+            &trig,
+            &mesh.transform,
+            mesh.shader.as_ref(),
+          );
+        }
       }
     }
   }
   pub fn rasterize_shaded(&mut self, scene: &Scene) {
     let camera = scene.camera();
     for mesh in scene.iter_meshes() {
-      for trig in mesh.iter_triangles() {
-        self.fill_triangle(
-          camera,
-          &trig,
-          &mesh.transform,
-          mesh.shader.as_ref(),
-        );
+      for face in mesh.faces() {
+        for trig in face.triangles() {
+          self.fill_triangle(
+            camera,
+            &trig,
+            &mesh.transform,
+            mesh.shader.as_ref(),
+          );
+        }
       }
     }
   }
@@ -602,8 +662,7 @@ impl Rasterizer {
     };
 
     let mut pts: Vec<ScreenPt> = Vec::new();
-    for point in triangle.vertices() {
-      let mut pt = ScreenPt::new(point);
+    for mut pt in triangle.vertices() {
       shader.vertex(&context, &mut pt);
       pts.push(pt);
     }
@@ -694,8 +753,7 @@ impl Rasterizer {
     };
     let mut pts: Vec<ScreenPt> = Vec::new();
 
-    for point in triangle.vertices() {
-      let mut pt = ScreenPt::new(point);
+    for mut pt in triangle.vertices() {
       shader.vertex(&context, &mut pt);
       pts.push(pt);
     }

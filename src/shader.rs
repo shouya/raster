@@ -12,7 +12,7 @@ pub trait Shader {
   fn vertex(&self, context: &ShaderContext, pt: &mut ScreenPt) {
     let matrix = context.view * context.camera * context.model;
     pt.point = matrix.transform_point(&pt.point);
-    let normal = dbg!(context.model.transform_vector(dbg!(pt.normal).as_ref()));
+    let normal = context.model.transform_vector(&pt.normal);
     pt.normal = Unit::new_normalize(normal);
   }
 

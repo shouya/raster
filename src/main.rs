@@ -206,7 +206,7 @@ fn sample_scene(tun: &Tunable) -> Scene {
   let translation = Vector3::new(tun.trans_x, tun.trans_y, tun.trans_z);
 
   let wavefront =
-    Wavefront::from_file(Path::new("assets/icosphere.obj")).unwrap();
+    Wavefront::from_file(Path::new("assets/pumpkin.obj")).unwrap();
 
   scene.add_mesh(
     Mesh::new_wavefront(wavefront)

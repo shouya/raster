@@ -1,9 +1,11 @@
 use std::{
   cmp::{max, Ordering},
   convert::TryInto,
+  sync::{Arc, Mutex},
 };
 
 use nalgebra::{Matrix4, Orthographic3, Point3, Vector2, Vector3, Vector4};
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::{
   lerp::{lerp, lerp_closed_iter, Lerp},
@@ -26,18 +28,20 @@ pub(crate) mod COLOR {
 }
 
 #[derive(Debug, Clone)]
-pub struct Image {
+pub struct Image<T> {
   dimension: (usize, usize),
-  pixels: Vec<Color>,
+  pixels: Vec<T>,
 }
 
-impl Image {
+impl<T> Image<T>
+where
+  T: Default,
+{
   pub fn new(size: (usize, usize)) -> Self {
     let len = size.0 * size.1;
     let mut buffer = Vec::with_capacity(len);
-    let clear_color = Vector4::new(0.0, 0.0, 0.0, 1.0);
     for _ in 0..len {
-      buffer.push(clear_color);
+      buffer.push(Default::default());
     }
 
     Self {
@@ -45,8 +49,10 @@ impl Image {
       pixels: buffer,
     }
   }
+}
 
-  pub fn pixels(&self) -> impl Iterator<Item = &Color> {
+impl<T> Image<T> {
+  pub fn pixels(&self) -> impl Iterator<Item = &T> {
     self.pixels.iter()
   }
 
@@ -58,7 +64,7 @@ impl Image {
     self.dimension.1
   }
 
-  pub fn pixel(&self, coords: (i32, i32)) -> Option<&Color> {
+  pub fn pixel(&self, coords: (i32, i32)) -> Option<&T> {
     if coords.0 < 0
       || coords.1 < 0
       || coords.0 >= self.width() as i32
@@ -70,7 +76,7 @@ impl Image {
     self.pixels.get(idx as usize)
   }
 
-  pub fn pixel_mut(&mut self, coords: (i32, i32)) -> Option<&mut Color> {
+  pub fn pixel_mut(&mut self, coords: (i32, i32)) -> Option<&mut T> {
     if coords.0 < 0
       || coords.1 < 0
       || coords.0 >= self.width() as i32
@@ -81,79 +87,33 @@ impl Image {
     let idx = coords.1 * self.width() as i32 + coords.0;
     self.pixels.get_mut(idx as usize)
   }
+
+  pub fn to_color<F>(&self, f: F) -> Image<Color>
+  where
+    F: Fn(&T) -> Color,
+  {
+    let pixels = self.pixels.iter().map(f).collect();
+    Image {
+      dimension: self.dimension,
+      pixels,
+    }
+  }
+
+  pub fn convert<S, F>(self, f: F) -> Image<S>
+  where
+    F: Fn(T) -> S,
+  {
+    let pixels = self.pixels.into_iter().map(f).collect();
+    Image {
+      dimension: self.dimension,
+      pixels,
+    }
+  }
 }
 
-#[derive(Debug, Clone)]
-pub struct Zbuffer {
-  dimension: (usize, usize),
-  // -1: unoccupied
-  // 0..inf: distance
-  buffer: Vec<f32>,
-}
-
-impl Zbuffer {
-  pub fn new(size: (usize, usize)) -> Self {
-    let len = size.0 * size.1;
-    let mut buffer = Vec::with_capacity(len);
-    for _ in 0..len {
-      buffer.push(10.0);
-    }
-
-    Self {
-      dimension: size,
-      buffer,
-    }
-  }
-
-  pub fn width(&self) -> usize {
-    self.dimension.0
-  }
-
-  pub fn height(&self) -> usize {
-    self.dimension.1
-  }
-
-  pub fn depth(&self, coords: (i32, i32)) -> Option<&f32> {
-    if coords.0 < 0
-      || coords.1 < 0
-      || coords.0 >= self.width() as i32
-      || coords.1 >= self.height() as i32
-    {
-      return None;
-    }
-
-    let idx = coords.1 * self.width() as i32 + coords.0;
-    self.buffer.get(idx as usize)
-  }
-
-  pub fn put_depth(&mut self, coords: (i32, i32), d: f32) -> Option<()> {
-    if coords.0 < 0
-      || coords.1 < 0
-      || coords.0 >= self.width() as i32
-      || coords.1 >= self.height() as i32
-    {
-      return None;
-    }
-
-    if d < 0.0 || d > 1.0 {
-      return None;
-    }
-
-    let idx = coords.1 * self.width() as i32 + coords.0;
-    self.buffer[idx as usize] = d;
-    Some(())
-  }
-
-  pub fn to_image(&self) -> Image {
-    let mut img = Image::new(self.dimension);
-    for x in 0..self.width() {
-      for y in 0..self.height() {
-        let coords = (x as i32, y as i32);
-        let d = *self.depth(coords).unwrap();
-        *img.pixel_mut(coords).unwrap() = COLOR::rgb(d, d, d);
-      }
-    }
-    img
+impl<T> Image<Mutex<T>> {
+  pub fn into_inner(self) -> Image<T> {
+    self.convert(|m| m.into_inner().unwrap())
   }
 }
 
@@ -346,13 +306,13 @@ pub struct Mesh {
   vertex_normals: Vec<Vector3<f32>>,
   texture_coords: Vec<Vector2<f32>>,
   faces: Vec<Face>,
-  shader: Box<dyn Shader>,
+  shader: Arc<dyn Shader>,
 }
 
 impl Mesh {
   #[allow(unused)]
   pub fn new() -> Self {
-    // let shader = PureColor::new(COLOR::rgba(1.0, 0.0, 0.0, 0.0));
+    // let shader = PureT::new(COLOR::rgba(1.0, 0.0, 0.0, 0.0));
     let shader = DiffuseShader::new(
       COLOR::rgba(1.0, 0.0, 0.0, 0.0),
       COLOR::rgba(1.0, 1.0, 1.0, 1.0),
@@ -365,7 +325,7 @@ impl Mesh {
       vertex_normals: Default::default(),
       texture_coords: Default::default(),
       faces: Vec::new(),
-      shader: Box::new(shader),
+      shader: Arc::new(shader),
     }
   }
 
@@ -382,7 +342,7 @@ impl Mesh {
       vertex_normals: wf.vertex_normals,
       texture_coords: wf.texture_coords,
       faces: wf.faces,
-      shader: Box::new(shader),
+      shader: Arc::new(shader),
     }
   }
 
@@ -532,14 +492,14 @@ impl Lerp for ScreenPt {
 pub struct Rasterizer {
   mode: RasterizerMode,
   view: Matrix4<f32>,
-  image: Image,
-  zbuffer: Zbuffer,
+  image: Image<Mutex<Color>>,
+  zbuffer: Image<Mutex<f32>>,
 }
 
 impl Rasterizer {
   pub fn new(size: (usize, usize)) -> Self {
     let image = Image::new(size);
-    let zbuffer = Zbuffer::new(size);
+    let zbuffer = Image::new(size);
     let mode = RasterizerMode::Shaded;
     let view =
       Orthographic3::new(0.0, size.0 as f32, size.1 as f32, 0.0, 0.0, -1.0)
@@ -578,25 +538,25 @@ impl Rasterizer {
         for (mut a, mut b) in face.edges() {
           mesh.shader.vertex(&context, &mut a);
           mesh.shader.vertex(&context, &mut b);
-          self.draw_line(a, b, &context, mesh.shader.as_ref());
+          self.draw_line(a, b, &context, mesh.shader.clone());
         }
       }
     }
   }
 
-  pub fn rasterize_shaded(&mut self, scene: &Scene) {
+  pub fn rasterize_shaded(&self, scene: &Scene) {
     let camera = scene.camera();
     for mesh in scene.iter_meshes() {
-      for face in mesh.faces() {
-        for trig in face.triangles() {
-          self.fill_triangle(
-            camera,
-            &trig,
-            &mesh.transform,
-            mesh.shader.as_ref(),
-          );
-        }
-      }
+      let shader = mesh.shader.clone();
+      mesh
+        .faces()
+        .collect::<Vec<_>>()
+        .par_iter()
+        .for_each(move |face| {
+          for trig in face.triangles() {
+            self.fill_triangle(camera, &trig, &mesh.transform, shader.clone());
+          }
+        });
     }
   }
 
@@ -676,10 +636,13 @@ impl Rasterizer {
     x_min >= 0 && x_max < w as i32 && y_min >= 0 && y_max < h as i32
   }
 
-  pub fn into_image(self) -> Image {
+  pub fn into_image(self) -> Image<Color> {
     match self.mode {
-      RasterizerMode::Zbuffer => self.zbuffer.to_image(),
-      _ => self.image,
+      RasterizerMode::Zbuffer => self
+        .zbuffer
+        .into_inner()
+        .to_color(|f| COLOR::rgb(*f, *f, *f)),
+      _ => self.image.into_inner(),
     }
   }
 
@@ -690,31 +653,36 @@ impl Rasterizer {
 
   // checks the zbuffer
   fn draw_pixel(
-    &mut self,
+    &self,
     p: &ScreenPt,
     context: &ShaderContext,
-    shader: &dyn Shader,
+    shader: Arc<dyn Shader>,
   ) {
     // beyond the camera clipping plane
     // if p.depth() < 0.0 || p.depth() > 1.0 {
     //   return;
     // }
-    match self.zbuffer.depth(p.coords()) {
+
+    let zbuf = self.zbuffer.pixel(p.coords()).map(|m| m.lock().unwrap());
+    match zbuf {
       None => return,
       Some(d) if p.depth() > *d => return,
-      Some(_) => {
+      Some(mut d) => {
         let mut pt = p.clone();
         shader.fragment(context, &mut pt);
-        self.put_pixel(pt.coords(), pt.color);
-        self.zbuffer.put_depth(pt.coords(), p.depth());
+        let color = pt.color;
+        let depth = pt.depth();
+
+        self.put_pixel(p.coords(), color);
+        *d = depth;
       }
     }
   }
 
   // do not check for zbuffer
-  fn put_pixel(&mut self, coords: (i32, i32), color: Color) {
-    if let Some(pixel) = self.image.pixel_mut(coords) {
-      *pixel = color;
+  fn put_pixel(&self, coords: (i32, i32), color: Color) {
+    if let Some(pixel) = self.image.pixel(coords) {
+      *pixel.lock().unwrap() = color;
     }
   }
 
@@ -723,7 +691,7 @@ impl Rasterizer {
     mut p1: ScreenPt,
     mut p2: ScreenPt,
     context: &ShaderContext,
-    shader: &dyn Shader,
+    shader: Arc<dyn Shader>,
   ) {
     if self.all_out_of_screen(&[p1, p2]) {
       // out of screen
@@ -740,18 +708,18 @@ impl Rasterizer {
     let n = max(dx.abs(), dy.abs());
 
     for pt in lerp_closed_iter(&p1, &p2, n as usize) {
-      self.draw_pixel(&pt, context, shader);
+      self.draw_pixel(&pt, context, shader.clone());
     }
   }
 
   // fill a triangle that is flat at bottom
   fn fill_upper_triangle(
-    &mut self,
+    &self,
     top: ScreenPt,
     bottom_left: ScreenPt,
     bottom_right: ScreenPt,
     context: &ShaderContext,
-    shader: &dyn Shader,
+    shader: Arc<dyn Shader>,
   ) {
     // ensure bottom is flat
     assert!(bottom_left.y_int() == bottom_right.y_int());
@@ -766,17 +734,17 @@ impl Rasterizer {
     let right_pts_iter = lerp_closed_iter(&top, &bottom_right, h);
 
     for (l, r) in left_pts_iter.zip(right_pts_iter) {
-      self.draw_horizontal_line(l, r, context, shader)
+      self.draw_horizontal_line(l, r, context, shader.clone())
     }
   }
 
   fn fill_lower_triangle(
-    &mut self,
+    &self,
     top_left: ScreenPt,
     top_right: ScreenPt,
     bottom: ScreenPt,
     context: &ShaderContext,
-    shader: &dyn Shader,
+    shader: Arc<dyn Shader>,
   ) {
     // ensure top is flat
     assert!(top_left.y_int() == top_right.y_int());
@@ -791,16 +759,16 @@ impl Rasterizer {
     let right_pts_iter = lerp_closed_iter(&top_right, &bottom, h);
 
     for (l, r) in left_pts_iter.zip(right_pts_iter) {
-      self.draw_horizontal_line(l, r, context, shader)
+      self.draw_horizontal_line(l, r, context, shader.clone())
     }
   }
 
   fn fill_triangle(
-    &mut self,
+    &self,
     camera: &Camera,
     triangle: &Triangle,
     model: &Matrix4<f32>,
-    shader: &dyn Shader,
+    shader: Arc<dyn Shader>,
   ) {
     let context = ShaderContext {
       view: self.view.clone(),
@@ -823,11 +791,11 @@ impl Rasterizer {
       Self::horizontally_split_triangle(pts.as_mut_slice().try_into().unwrap());
 
     if let Some([a, b, c]) = upper {
-      self.fill_upper_triangle(a, b, c, &context, shader);
+      self.fill_upper_triangle(a, b, c, &context, shader.clone());
     }
 
     if let Some([a, b, c]) = lower {
-      self.fill_lower_triangle(a, b, c, &context, shader);
+      self.fill_lower_triangle(a, b, c, &context, shader.clone());
     }
   }
 
@@ -868,15 +836,15 @@ impl Rasterizer {
   }
 
   fn draw_horizontal_line(
-    &mut self,
+    &self,
     p1: ScreenPt,
     p2: ScreenPt,
     context: &ShaderContext,
-    shader: &dyn Shader,
+    shader: Arc<dyn Shader>,
   ) {
     let w = (p1.x_int() - p2.x_int()).abs() as usize;
     for p in lerp_closed_iter(&p1, &p2, w) {
-      self.draw_pixel(&p, context, shader);
+      self.draw_pixel(&p, context, shader.clone());
     }
   }
 

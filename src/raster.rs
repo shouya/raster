@@ -1,23 +1,16 @@
-use std::{
-  cmp::{max, Ordering},
-  collections::HashMap,
-  convert::TryInto,
-  mem,
-};
+use std::{cmp::{max, Ordering}, convert::TryInto};
 
-use nalgebra::{
-  Matrix4, Norm, Orthographic3, Point2, Point3, Unit, Vector2, Vector3, Vector4,
-};
+use nalgebra::{Matrix4, Orthographic3, Point3, Vector2, Vector3, Vector4};
 
 use crate::{
   lerp::{lerp, lerp_closed_iter, Lerp},
-  shader::{DiffuseShader, PureColor, Shader, ShaderContext},
-  util::sorted_tuple3,
+  shader::{DiffuseShader, Shader, ShaderContext},
   wavefront::Wavefront,
 };
 
 pub type Color = Vector4<f32>;
 
+#[allow(non_snake_case)]
 pub(crate) mod COLOR {
   use super::*;
 
@@ -183,14 +176,6 @@ impl Camera {
     }
   }
 
-  pub fn world_to_camera(&self, point: &Point3<f32>) -> Point3<f32> {
-    // x,y,z^-1
-    let relative_world = self.inv_transform.transform_point(&point);
-    let mut point = self.perspective.transform_point(&relative_world);
-    point.z = 1.0 / point.z;
-    point
-  }
-
   pub fn matrix(&self) -> Matrix4<f32> {
     self.perspective * self.inv_transform
   }
@@ -212,6 +197,7 @@ impl<'a> From<[&'a PolyVertRef<'a>; 3]> for Triangle<'a> {
 }
 
 impl<'a> Triangle<'a> {
+  #[allow(unused)]
   pub fn edges(&self) -> impl Iterator<Item = (ScreenPt, ScreenPt)> + '_ {
     vec![
       (
@@ -250,10 +236,6 @@ impl Face {
       vertices: Vec::new(),
     }
   }
-  pub fn from_vert(vertices: Vec<PolyVert>) -> Face {
-    Face { vertices }
-  }
-
   pub fn add_vert(&mut self, v: PolyVert) {
     self.vertices.push(v);
   }
@@ -365,6 +347,7 @@ pub struct Mesh {
 }
 
 impl Mesh {
+  #[allow(unused)]
   pub fn new() -> Self {
     // let shader = PureColor::new(COLOR::rgba(1.0, 0.0, 0.0, 0.0));
     let shader = DiffuseShader::new(
@@ -469,8 +452,9 @@ impl Default for RasterizerMode {
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub struct ScreenPt {
   pub point: Point3<f32>,
+  pub orig_point: Point3<f32>,
   pub color: Color,
-  pub normal: Unit<Vector3<f32>>,
+  pub normal: Vector3<f32>,
   pub uv: Vector2<f32>,
 }
 
@@ -491,9 +475,10 @@ impl ScreenPt {
   pub fn new(point: Point3<f32>) -> Self {
     Self {
       point,
+      orig_point: point,
       color: COLOR::rgba(1.0, 0.0, 0.0, 1.0),
       uv: Vector2::new(0.0, 0.0),
-      normal: Unit::new_normalize(point.coords),
+      normal: point.coords,
     }
   }
 
@@ -502,7 +487,7 @@ impl ScreenPt {
   }
 
   pub fn set_normal(&mut self, normal: Vector3<f32>) {
-    self.normal = Unit::new_normalize(normal);
+    self.normal = normal.normalize();
   }
 
   pub fn x(&self) -> f32 {
@@ -533,6 +518,7 @@ impl Lerp for ScreenPt {
   fn lerp(&self, other: &Self, t: f32) -> Self {
     ScreenPt {
       point: lerp(t, &self.point, &other.point),
+      orig_point: lerp(t, &self.orig_point, &other.orig_point),
       normal: self.normal.slerp(&other.normal, t),
       color: self.color.lerp(&other.color, t),
       uv: self.uv.lerp(&other.uv, t),
@@ -695,18 +681,6 @@ impl Rasterizer {
   }
 
   // note: the output may go out of screen
-  pub fn world_to_screen(
-    &self,
-    camera: &Camera,
-    point: &Point3<f32>,
-  ) -> ScreenPt {
-    //
-    // todo: fix the depth
-    let pcam = camera.world_to_camera(&point);
-    let pscr = self.view.transform_point(&pcam);
-    ScreenPt::new(pscr)
-  }
-
   pub fn size(&self) -> (usize, usize) {
     (self.image.width(), self.image.height())
   }
@@ -739,34 +713,6 @@ impl Rasterizer {
     if let Some(pixel) = self.image.pixel_mut(coords) {
       *pixel = color;
     }
-  }
-
-  // fn draw_triangle(&mut self, triangle: Triangle) {
-  //   triangle
-  // }
-
-  fn draw_triangle_wireframe(
-    &mut self,
-    camera: &Camera,
-    triangle: &Triangle,
-    model: &Matrix4<f32>,
-    shader: &dyn Shader,
-  ) {
-    let context = ShaderContext {
-      view: self.view.clone(),
-      camera: camera.matrix(),
-      model: model.clone(),
-    };
-
-    let mut pts: Vec<ScreenPt> = Vec::new();
-    for mut pt in triangle.vertices() {
-      shader.vertex(&context, &mut pt);
-      pts.push(pt);
-    }
-
-    self.draw_line(pts[1], pts[2], &context, shader);
-    self.draw_line(pts[2], pts[0], &context, shader);
-    self.draw_line(pts[0], pts[1], &context, shader);
   }
 
   fn draw_line(
@@ -935,19 +881,6 @@ impl Rasterizer {
     let (x, y) = point.coords();
     let (w, h) = self.size();
     x < 0 || y < 0 || x >= w as i32 || y >= h as i32
-  }
-
-  fn invisible(&self, point: &ScreenPt) -> bool {
-    if self.out_of_screen(point) {
-      return true;
-    }
-
-    let d = point.depth();
-    if let Some(depth) = self.zbuffer.depth(point.coords()) {
-      return d >= *depth;
-    }
-
-    unreachable!()
   }
 }
 

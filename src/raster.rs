@@ -1,4 +1,9 @@
-use std::{cmp::max, collections::HashMap, convert::TryInto, mem};
+use std::{
+  cmp::{max, Ordering},
+  collections::HashMap,
+  convert::TryInto,
+  mem,
+};
 
 use nalgebra::{
   Matrix4, Norm, Orthographic3, Point2, Point3, Unit, Vector2, Vector3, Vector4,
@@ -133,6 +138,11 @@ impl Zbuffer {
     {
       return None;
     }
+
+    if d < 0.0 || d > 1.0 {
+      return None;
+    }
+
     let idx = coords.1 * self.width() as i32 + coords.0;
     self.buffer[idx as usize] = d;
     Some(())
@@ -333,6 +343,15 @@ impl<'a> FaceRef<'a> {
     }
 
     res.into_iter()
+  }
+
+  pub fn edges(&self) -> impl Iterator<Item = (ScreenPt, ScreenPt)> + '_ {
+    let n = self.vertices.len();
+    (0..n).map(move |i| {
+      let a = &self.vertices[i];
+      let b = &self.vertices[(i + 1) % n];
+      (ScreenPt::from(a), ScreenPt::from(b))
+    })
   }
 }
 
@@ -561,17 +580,21 @@ impl Rasterizer {
     let camera = scene.camera();
     for mesh in scene.iter_meshes() {
       for face in mesh.faces() {
-        for trig in face.triangles() {
-          self.draw_triangle_wireframe(
-            camera,
-            &trig,
-            &mesh.transform,
-            mesh.shader.as_ref(),
-          );
+        let context = ShaderContext {
+          view: self.view.clone(),
+          camera: camera.matrix(),
+          model: mesh.transform.clone(),
+        };
+
+        for (mut a, mut b) in face.edges() {
+          mesh.shader.vertex(&context, &mut a);
+          mesh.shader.vertex(&context, &mut b);
+          self.draw_line(a, b, &context, mesh.shader.as_ref());
         }
       }
     }
   }
+
   pub fn rasterize_shaded(&mut self, scene: &Scene) {
     let camera = scene.camera();
     for mesh in scene.iter_meshes() {
@@ -586,6 +609,82 @@ impl Rasterizer {
         }
       }
     }
+  }
+
+  fn clip_line(&self, a: &mut ScreenPt, b: &mut ScreenPt) {
+    let intersects = self.screen_line_intersects(a, b);
+
+    match intersects.as_slice() {
+      [] => {}
+      [t] => {
+        if self.out_of_screen(a) {
+          *a = lerp(*t, a, b);
+        } else if self.out_of_screen(b) {
+          *b = lerp(*t, a, b);
+        }
+      }
+      [t1, t2] => {
+        let a_clipped = lerp(*t1, a, b);
+        let b_clipped = lerp(*t2, a, b);
+        *a = a_clipped;
+        *b = b_clipped;
+      }
+      _ => {
+        unreachable!("clipping: ({},{}) => {:?}", a.point, b.point, intersects)
+      }
+    }
+  }
+
+  fn screen_line_intersects(&self, a: &ScreenPt, b: &ScreenPt) -> Vec<f32> {
+    let w = self.size().0 as f32;
+    let h = self.size().1 as f32;
+
+    let tl = (0.0 - a.x()) / (b.x() - a.x());
+    let tt = (0.0 - a.y()) / (b.y() - a.y());
+    let tr = (w - a.x()) / (b.x() - a.x());
+    let tb = (h - a.y()) / (b.y() - a.y());
+
+    let mut res = Vec::new();
+    let in_bound = |x| (0.0..1.0).contains(&x);
+
+    if in_bound(tl) && (0.0..h).contains(&lerp(tl, a, b).y()) {
+      res.push(tl);
+    }
+    if in_bound(tr) && (0.0..h).contains(&lerp(tr, a, b).y()) {
+      res.push(tr);
+    }
+    if in_bound(tt) && (0.0..w).contains(&lerp(tt, a, b).x()) {
+      res.push(tt);
+    }
+    if in_bound(tb) && (0.0..w).contains(&lerp(tb, a, b).x()) {
+      res.push(tb);
+    }
+
+    res.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+
+    res
+  }
+
+  fn all_out_of_screen(&self, pts: &[ScreenPt]) -> bool {
+    assert!(pts.len() > 0);
+    let x_min = pts.iter().map(|p| p.x_int()).min().unwrap();
+    let x_max = pts.iter().map(|p| p.x_int()).max().unwrap();
+    let y_min = pts.iter().map(|p| p.y_int()).min().unwrap();
+    let y_max = pts.iter().map(|p| p.y_int()).max().unwrap();
+    let (w, h) = self.size();
+
+    x_max < 0 || x_min >= w as i32 || y_max < 0 || y_min >= h as i32
+  }
+
+  fn all_inside_screen(&self, pts: &[ScreenPt]) -> bool {
+    assert!(pts.len() > 0);
+    let x_min = pts.iter().map(|p| p.x_int()).min().unwrap();
+    let x_max = pts.iter().map(|p| p.x_int()).max().unwrap();
+    let y_min = pts.iter().map(|p| p.y_int()).min().unwrap();
+    let y_max = pts.iter().map(|p| p.y_int()).max().unwrap();
+    let (w, h) = self.size();
+
+    x_min >= 0 && x_max < w as i32 && y_min >= 0 && y_max < h as i32
   }
 
   pub fn into_image(self) -> Image {
@@ -665,23 +764,33 @@ impl Rasterizer {
       pts.push(pt);
     }
 
-    self.draw_line(&pts[1], &pts[2], &context, shader);
-    self.draw_line(&pts[2], &pts[0], &context, shader);
-    self.draw_line(&pts[0], &pts[1], &context, shader);
+    self.draw_line(pts[1], pts[2], &context, shader);
+    self.draw_line(pts[2], pts[0], &context, shader);
+    self.draw_line(pts[0], pts[1], &context, shader);
   }
 
   fn draw_line(
     &mut self,
-    p1: &ScreenPt,
-    p2: &ScreenPt,
+    mut p1: ScreenPt,
+    mut p2: ScreenPt,
     context: &ShaderContext,
     shader: &dyn Shader,
   ) {
+    if self.all_out_of_screen(&[p1, p2]) {
+      // out of screen
+      return;
+    }
+
+    if !self.all_inside_screen(&[p1, p2]) {
+      // needs clipping
+      self.clip_line(&mut p1, &mut p2);
+    }
+
     let dx = p2.x_int() - p1.x_int();
     let dy = p2.y_int() - p1.y_int();
     let n = max(dx.abs(), dy.abs());
 
-    for pt in lerp_closed_iter(p1, p2, n as usize) {
+    for pt in lerp_closed_iter(&p1, &p2, n as usize) {
       self.draw_pixel(&pt, context, shader);
     }
   }
@@ -822,14 +931,14 @@ impl Rasterizer {
     }
   }
 
-  fn out_of_view(&self, point: &ScreenPt) -> bool {
+  fn out_of_screen(&self, point: &ScreenPt) -> bool {
     let (x, y) = point.coords();
     let (w, h) = self.size();
     x < 0 || y < 0 || x >= w as i32 || y >= h as i32
   }
 
   fn invisible(&self, point: &ScreenPt) -> bool {
-    if self.out_of_view(point) {
+    if self.out_of_screen(point) {
       return true;
     }
 

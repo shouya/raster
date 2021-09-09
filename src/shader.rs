@@ -8,7 +8,7 @@ pub struct ShaderContext {
   pub model: Matrix4<f32>,
 }
 
-pub trait Shader: Sync + Send {
+pub trait Shader {
   fn vertex(&self, context: &ShaderContext, pt: &mut ScreenPt) {
     let matrix = context.view * context.camera * context.model;
     pt.point = matrix.transform_point(&pt.point);

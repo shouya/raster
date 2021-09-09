@@ -5,7 +5,7 @@ use eframe::{
   epi::{self, TextureAllocator},
 };
 use nalgebra::{Matrix4, Vector3};
-use raster::{Camera, Color, Mesh, Rasterizer, RasterizerMode, Scene};
+use raster::{Camera, Mesh, Rasterizer, RasterizerMode, Scene};
 use wavefront::Wavefront;
 
 mod lerp;
@@ -19,7 +19,7 @@ use crate::raster::Image;
 struct RasterApp {
   texture_size: (usize, usize),
   texture_handle: Option<egui::TextureId>,
-  image: Option<Image<Color>>,
+  image: Option<Image>,
   redraw: bool,
   tunable: Tunable,
 }
@@ -68,7 +68,7 @@ impl Default for Tunable {
   }
 }
 
-fn convert_texture(image: &Image<Color>) -> Vec<egui::Color32> {
+fn convert_texture(image: &Image) -> Vec<egui::Color32> {
   let dim = image.width() * image.height();
   let mut pixel_cache = Vec::with_capacity(dim);
   let to256 = |f: f32| (f.clamp(0.0, 1.0) * 255.0).round() as u8;
@@ -180,7 +180,7 @@ fn main() {
   eframe::run_native(Box::new(RasterApp::default()), Default::default());
 }
 
-fn render_scene(tun: &Tunable, size: (usize, usize), scene: &Scene) -> Image<Color> {
+fn render_scene(tun: &Tunable, size: (usize, usize), scene: &Scene) -> Image {
   let mut raster = Rasterizer::new(size);
   raster.set_mode(tun.mode);
   raster.rasterize(&scene);

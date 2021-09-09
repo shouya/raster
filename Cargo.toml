@@ -7,7 +7,6 @@ edition = "2018"
 anyhow = "1.0.43"
 eframe = "0.14.0"
 nalgebra = "0.29.0"
-rayon = "1.5.1"
 
 [profile.release]
 debug = true

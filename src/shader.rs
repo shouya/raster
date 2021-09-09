@@ -57,7 +57,8 @@ impl Shader for DiffuseShader {
     let orig_position = context.model.transform_point(&pt.orig_point);
 
     let light_angle = (self.light_pos - orig_position).normalize();
-    let light_intensity = f32::max(light_angle.dot(&pt.normal), 0.0);
+    let light_intensity =
+      f32::max(light_angle.dot(&pt.normal.normalize()), 0.0);
     let ambient = self.color * 0.1;
     let mut color = Vector4::zeros();
     color += self.light.component_mul(&self.color) * light_intensity + ambient;

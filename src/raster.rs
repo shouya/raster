@@ -1,4 +1,7 @@
-use std::{cmp::{max, Ordering}, convert::TryInto};
+use std::{
+  cmp::{max, Ordering},
+  convert::TryInto,
+};
 
 use nalgebra::{Matrix4, Orthographic3, Point3, Vector2, Vector3, Vector4};
 

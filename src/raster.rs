@@ -325,13 +325,11 @@ impl<'a> FaceRef<'a> {
     assert!(self.vertices.len() >= 3);
 
     let mut res = Vec::new();
-    let n = self.vertices.len();
 
-    for i in (0..(n - 1)).step_by(2) {
-      let v1 = &self.vertices[i];
-      let v2 = &self.vertices[(i + 1) % n];
-      let v3 = &self.vertices[(i + 2) % n];
-      res.push(Triangle::from([v1, v2, v3]));
+    let v0 = &self.vertices[0];
+    let vs = self.vertices.iter().skip(1).collect::<Vec<_>>();
+    for v in vs.windows(2) {
+      res.push(Triangle::from([v0, v[0], v[1]]));
     }
 
     res.into_iter()

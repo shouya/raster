@@ -1,4 +1,4 @@
-use std::{f32::consts::PI, path::Path};
+use std::{f32::consts::PI, path::Path, process::exit};
 
 use eframe::{self, NativeOptions, egui::{self, Vec2}, epi::{self, TextureAllocator}};
 use nalgebra::{Matrix4, Vector3};
@@ -59,7 +59,7 @@ impl Default for Tunable {
       rot_z: 0.0,
       trans_x: 0.0,
       trans_y: 0.0,
-      trans_z: -1.2,
+      trans_z: 4.7,
       mode: RasterizerMode::Shaded,
     }
   }
@@ -153,6 +153,7 @@ impl RasterApp {
     self.texture_handle = Some(texture_id);
     self.image = Some(image);
     self.redraw = false;
+    exit(0);
   }
 }
 
@@ -205,7 +206,7 @@ fn sample_scene(tun: &Tunable) -> Scene {
   let translation = Vector3::new(tun.trans_x, tun.trans_y, tun.trans_z);
 
   let wavefront =
-    Wavefront::from_file(Path::new("assets/plane.obj")).unwrap();
+    Wavefront::from_file(Path::new("assets/pumpkin.obj")).unwrap();
 
   scene.add_mesh(
     Mesh::new_wavefront(wavefront)

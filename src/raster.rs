@@ -548,10 +548,14 @@ impl ScreenPt {
 
 impl Lerp for ScreenPt {
   fn lerp(&self, other: &Self, t: f32) -> Self {
+    if self == other {
+      return *self;
+    }
+
     ScreenPt {
       point: lerp(t, &self.point, &other.point),
       orig_point: lerp(t, &self.orig_point, &other.orig_point),
-      normal: self.normal.slerp(&other.normal, t),
+      normal: self.normal.lerp(&other.normal, t),
       color: self.color.lerp(&other.color, t),
       uv: self.uv.lerp(&other.uv, t),
     }
@@ -636,12 +640,12 @@ impl Rasterizer {
 
     vec![&_trig]
       .into_iter()
+      .flat_map(|t| self.clip_triangle_component(&t, |p| p.point.z, 0.0, -1.0))
+      .flat_map(|t| self.clip_triangle_component(&t, |p| p.point.z, 1.0, 1.0))
       .flat_map(|t| self.clip_triangle_component(&t, |p| p.point.x, 0.0, -1.0))
       .flat_map(|t| self.clip_triangle_component(&t, |p| p.point.x, w, 1.0))
       .flat_map(|t| self.clip_triangle_component(&t, |p| p.point.y, 0.0, -1.0))
       .flat_map(|t| self.clip_triangle_component(&t, |p| p.point.y, h, 1.0))
-      .flat_map(|t| self.clip_triangle_component(&t, |p| p.point.z, 0.0, -1.0))
-      .flat_map(|t| self.clip_triangle_component(&t, |p| p.point.z, 1.0, 1.0))
       .collect()
   }
 
@@ -930,26 +934,26 @@ impl Rasterizer {
     for trig in self.clip_triangle(&trig) {
       let mut pts: Vec<_> = trig.vertices().into();
 
-      self.draw_line(pts[0], pts[1], &context, shader);
-      self.draw_line(pts[1], pts[2], &context, shader);
-      self.draw_line(pts[2], pts[0], &context, shader);
+      // self.draw_line(pts[0], pts[1], &context, shader);
+      // self.draw_line(pts[1], pts[2], &context, shader);
+      // self.draw_line(pts[2], pts[0], &context, shader);
 
       let [upper, lower] = Self::horizontally_split_triangle(
         pts.as_mut_slice().try_into().unwrap(),
       );
 
       if let Some([a, b, c]) = upper {
-        // self.draw_line(a, b, &context, shader);
-        // self.draw_line(b, c, &context, shader);
-        // self.draw_line(c, a, &context, shader);
-        // self.fill_upper_triangle(a, b, c, &context, shader);
+        self.draw_line(a, b, &context, shader);
+        self.draw_line(b, c, &context, shader);
+        self.draw_line(c, a, &context, shader);
+        self.fill_upper_triangle(a, b, c, &context, shader);
       }
 
       if let Some([a, b, c]) = lower {
-        // self.draw_line(a, b, &context, shader);
-        // self.draw_line(b, c, &context, shader);
-        // self.draw_line(c, a, &context, shader);
-        // self.fill_lower_triangle(a, b, c, &context, shader);
+        self.draw_line(a, b, &context, shader);
+        self.draw_line(b, c, &context, shader);
+        self.draw_line(c, a, &context, shader);
+        self.fill_lower_triangle(a, b, c, &context, shader);
       }
     }
   }

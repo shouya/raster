@@ -1,9 +1,6 @@
 use std::{f32::consts::PI, path::Path};
 
-use eframe::{
-  self, egui,
-  epi::{self, TextureAllocator},
-};
+use eframe::{self, NativeOptions, egui::{self, Vec2}, epi::{self, TextureAllocator}};
 use nalgebra::{Matrix4, Vector3};
 use raster::{Camera, Mesh, Rasterizer, RasterizerMode, Scene};
 use wavefront::Wavefront;
@@ -62,8 +59,8 @@ impl Default for Tunable {
       rot_z: 0.0,
       trans_x: 0.0,
       trans_y: 0.0,
-      trans_z: 4.9,
-      mode: RasterizerMode::Wireframe,
+      trans_z: -1.2,
+      mode: RasterizerMode::Shaded,
     }
   }
 }
@@ -177,7 +174,9 @@ impl epi::App for RasterApp {
 }
 
 fn main() {
-  eframe::run_native(Box::new(RasterApp::default()), Default::default());
+  let mut options: NativeOptions = Default::default();
+  options.initial_window_size = Some(Vec2::new(900.0, 600.0));
+  eframe::run_native(Box::new(RasterApp::default()), options);
 }
 
 fn render_scene(tun: &Tunable, size: (usize, usize), scene: &Scene) -> Image {
@@ -206,7 +205,7 @@ fn sample_scene(tun: &Tunable) -> Scene {
   let translation = Vector3::new(tun.trans_x, tun.trans_y, tun.trans_z);
 
   let wavefront =
-    Wavefront::from_file(Path::new("assets/pumpkin.obj")).unwrap();
+    Wavefront::from_file(Path::new("assets/plane.obj")).unwrap();
 
   scene.add_mesh(
     Mesh::new_wavefront(wavefront)

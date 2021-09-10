@@ -62,7 +62,7 @@ impl Default for Tunable {
       rot_z: 0.0,
       trans_x: 0.0,
       trans_y: 0.0,
-      trans_z: 4.3,
+      trans_z: 4.9,
       mode: RasterizerMode::Wireframe,
     }
   }

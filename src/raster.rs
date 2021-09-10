@@ -8,6 +8,7 @@ use nalgebra::{Matrix4, Orthographic3, Point3, Vector2, Vector3, Vector4};
 use crate::{
   lerp::{lerp, lerp_closed_iter, Lerp},
   shader::{DiffuseShader, Shader, ShaderContext},
+  util::f32_cmp,
   wavefront::Wavefront,
 };
 
@@ -438,7 +439,7 @@ impl Scene {
   }
 }
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum RasterizerMode {
   Wireframe,
   Shaded,
@@ -600,11 +601,14 @@ impl Rasterizer {
     }
   }
 
-  fn clip_line(&self, a: &mut ScreenPt, b: &mut ScreenPt) {
+  // return false if the line doesn't go across the view at all
+  fn clip_line(&self, a: &mut ScreenPt, b: &mut ScreenPt) -> bool {
     let intersects = self.screen_line_intersects(a, b);
 
     match intersects.as_slice() {
-      [] => {}
+      [] => {
+        return false;
+      }
       [t] => {
         if self.out_of_screen(a) {
           *a = lerp(*t, a, b);
@@ -618,35 +622,52 @@ impl Rasterizer {
         *a = a_clipped;
         *b = b_clipped;
       }
-      _ => {
-        unreachable!("clipping: ({},{}) => {:?}", a.point, b.point, intersects)
+      ts => {
+        let res: Vec<_> =
+          ts.iter().map(|t| a.point.lerp(&b.point, *t)).collect();
+        unreachable!(
+          "clipping: ({},{}) => {:?} ({:?})",
+          a.point, b.point, intersects, res
+        )
       }
     }
+
+    true
   }
 
   fn screen_line_intersects(&self, a: &ScreenPt, b: &ScreenPt) -> Vec<f32> {
+    let a = a.point;
+    let b = b.point;
     let w = self.size().0 as f32;
     let h = self.size().1 as f32;
 
-    let tl = (0.0 - a.x()) / (b.x() - a.x());
-    let tt = (0.0 - a.y()) / (b.y() - a.y());
-    let tr = (w - a.x()) / (b.x() - a.x());
-    let tb = (h - a.y()) / (b.y() - a.y());
+    let tl = (0.0 - a.x) / (b.x - a.x);
+    let tr = (w - a.x) / (b.x - a.x);
+    let tt = (0.0 - a.y) / (b.y - a.y);
+    let tb = (h - a.y) / (b.y - a.y);
+    let tn = (0.0 - a.z) / (b.z - a.z);
+    let tf = (1.0 - a.z) / (b.z - a.z);
 
     let mut res = Vec::new();
     let in_bound = |x| (0.0..1.0).contains(&x);
 
-    if in_bound(tl) && (0.0..h).contains(&lerp(tl, a, b).y()) {
+    if in_bound(tl) && self.inside_screen(&a.lerp(&b, tl)) {
       res.push(tl);
     }
-    if in_bound(tr) && (0.0..h).contains(&lerp(tr, a, b).y()) {
+    if in_bound(tr) && self.inside_screen(&a.lerp(&b, tr)) {
       res.push(tr);
     }
-    if in_bound(tt) && (0.0..w).contains(&lerp(tt, a, b).x()) {
+    if in_bound(tt) && self.inside_screen(&a.lerp(&b, tt)) {
       res.push(tt);
     }
-    if in_bound(tb) && (0.0..w).contains(&lerp(tb, a, b).x()) {
+    if in_bound(tb) && self.inside_screen(&a.lerp(&b, tb)) {
       res.push(tb);
+    }
+    if in_bound(tn) && self.inside_screen(&a.lerp(&b, tn)) {
+      res.push(tn);
+    }
+    if in_bound(tf) && self.inside_screen(&a.lerp(&b, tf)) {
+      res.push(tf);
     }
 
     res.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
@@ -660,9 +681,16 @@ impl Rasterizer {
     let x_max = pts.iter().map(|p| p.x_int()).max().unwrap();
     let y_min = pts.iter().map(|p| p.y_int()).min().unwrap();
     let y_max = pts.iter().map(|p| p.y_int()).max().unwrap();
+    let z_min = pts.iter().map(|p| p.depth()).min_by(f32_cmp).unwrap();
+    let z_max = pts.iter().map(|p| p.depth()).max_by(f32_cmp).unwrap();
     let (w, h) = self.size();
 
-    x_max < 0 || x_min >= w as i32 || y_max < 0 || y_min >= h as i32
+    x_max < 0
+      || x_min >= w as i32
+      || y_max < 0
+      || y_min >= h as i32
+      || z_max < 0.0
+      || z_min >= 1.0
   }
 
   fn all_inside_screen(&self, pts: &[ScreenPt]) -> bool {
@@ -671,9 +699,26 @@ impl Rasterizer {
     let x_max = pts.iter().map(|p| p.x_int()).max().unwrap();
     let y_min = pts.iter().map(|p| p.y_int()).min().unwrap();
     let y_max = pts.iter().map(|p| p.y_int()).max().unwrap();
+    let z_min = pts.iter().map(|p| p.depth()).min_by(f32_cmp).unwrap();
+    let z_max = pts.iter().map(|p| p.depth()).max_by(f32_cmp).unwrap();
     let (w, h) = self.size();
 
-    x_min >= 0 && x_max < w as i32 && y_min >= 0 && y_max < h as i32
+    x_min >= 0
+      && x_max < w as i32
+      && y_min >= 0
+      && y_max < h as i32
+      && z_min >= 0.0
+      && z_max <= 1.0
+  }
+
+  fn inside_screen(&self, p: &Point3<f32>) -> bool {
+    let (w, h) = self.size();
+    p.x >= 0.0
+      && p.x < w as f32
+      && p.y >= 0.0
+      && p.y < h as f32
+      && p.z >= 0.0
+      && p.z <= 1.0
   }
 
   pub fn into_image(self) -> Image {
@@ -732,7 +777,10 @@ impl Rasterizer {
 
     if !self.all_inside_screen(&[p1, p2]) {
       // needs clipping
-      self.clip_line(&mut p1, &mut p2);
+      if !self.clip_line(&mut p1, &mut p2) {
+        // out of screen
+        return;
+      }
     }
 
     let dx = p2.x_int() - p1.x_int();

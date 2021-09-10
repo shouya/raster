@@ -632,6 +632,7 @@ impl Rasterizer {
 
   fn clip_triangle(&self, _trig: &Trig<ScreenPt>) -> Vec<Trig<ScreenPt>> {
     let (w, h) = self.size_f32();
+    let (w, h) = (w - 1.0, h - 1.0);
 
     vec![&_trig]
       .into_iter()
@@ -720,10 +721,10 @@ impl Rasterizer {
     let get_y = |p: &ScreenPt| p.point.y;
     let get_z = |p: &ScreenPt| p.point.z;
 
-    if !Self::clip_line_component(a, b, get_x, 0.0, w) {
+    if !Self::clip_line_component(a, b, get_x, 0.0, w - 1.0) {
       return false;
     }
-    if !Self::clip_line_component(a, b, get_y, 0.0, h) {
+    if !Self::clip_line_component(a, b, get_y, 0.0, h - 1.0) {
       return false;
     }
     if !Self::clip_line_component(a, b, get_z, 0.0, 1.0 as f32) {
@@ -763,12 +764,12 @@ impl Rasterizer {
     if av < min && bv >= min {
       // clip a on min
       let t = (min - av) / (bv - av);
-      assert!((0.0..1.0).contains(&t));
+      assert!((0.0..=1.0).contains(&t));
       *a = lerp(t, a, b);
     } else if av >= min && bv < min {
       // clip b on min
       let t = (min - av) / (bv - av);
-      assert!((0.0..1.0).contains(&t));
+      assert!((0.0..=1.0).contains(&t));
       *b = lerp(t, a, b);
     }
 
@@ -779,12 +780,12 @@ impl Rasterizer {
     if av > max && bv <= max {
       // clip a on max
       let t = (max - av) / (bv - av);
-      assert!((0.0..1.0).contains(&t));
+      assert!((0.0..=1.0).contains(&t));
       *a = lerp(t, a, b);
     } else if av <= max && bv > max {
       // clip b on max
       let t = (max - av) / (bv - av);
-      assert!((0.0..1.0).contains(&t));
+      assert!((0.0..=1.0).contains(&t));
       *b = lerp(t, a, b);
     }
 

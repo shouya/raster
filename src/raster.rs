@@ -240,6 +240,15 @@ impl<'a, T> Trig<T> {
     }
   }
 
+  pub fn map_in_place<F>(&mut self, f: F)
+  where
+    F: Fn(&mut T) -> (),
+  {
+    f(&mut self.vertices[0]);
+    f(&mut self.vertices[1]);
+    f(&mut self.vertices[2]);
+  }
+
   pub fn map<S, F>(self, f: F) -> Trig<S>
   where
     F: Fn(T) -> S,
@@ -347,7 +356,9 @@ impl<'a> FaceRef<'a> {
     self.vertices.push(v);
   }
 
-  pub fn tessellate(&self) -> impl Iterator<Item = Trig<&PolyVertRef<'a>>> + '_ {
+  pub fn tessellate(
+    &self,
+  ) -> impl Iterator<Item = Trig<&PolyVertRef<'a>>> + '_ {
     assert!(self.vertices.len() >= 3);
 
     let mut res = Vec::new();
@@ -611,8 +622,8 @@ impl Rasterizer {
 
       for face in mesh.faces() {
         for trig in face.tessellate() {
-          let trig = trig.convert();
-          let trig = self.shade_triangle_vertices(&trig, &context, shader);
+          let mut trig = trig.convert();
+          self.shade_triangle_vertices(&mut trig, &context, shader);
           self.fill_triangle(&trig, &context, shader);
         }
       }
@@ -627,8 +638,8 @@ impl Rasterizer {
 
       for face in mesh.faces() {
         for trig in face.tessellate() {
-          let trig = trig.convert();
-          let trig = self.shade_triangle_vertices(&trig, &context, shader);
+          let mut trig = trig.convert();
+          self.shade_triangle_vertices(&mut trig, &context, shader);
           self.draw_triangle_clipped(&trig, &context, shader);
         }
       }
@@ -930,15 +941,11 @@ impl Rasterizer {
 
   fn shade_triangle_vertices(
     &self,
-    trig: &Trig<ScreenPt>,
+    trig: &mut Trig<ScreenPt>,
     context: &ShaderContext,
     shader: &dyn Shader,
-  ) -> Trig<ScreenPt> {
-    trig.as_ref().map(|pt| {
-      let mut pt = pt.clone();
-      shader.vertex(&context, &mut pt);
-      pt
-    })
+  ) {
+    trig.map_in_place(|pt| shader.vertex(&context, pt))
   }
 
   fn draw_triangle_clipped(

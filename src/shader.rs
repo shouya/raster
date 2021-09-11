@@ -3,14 +3,13 @@ use nalgebra::{Matrix4, Point3, Vector4};
 use crate::raster::{Color, ScreenPt};
 
 pub struct ShaderContext {
-  pub view: Matrix4<f32>,
   pub camera: Matrix4<f32>,
   pub model: Matrix4<f32>,
 }
 
 pub trait Shader {
   fn vertex(&self, context: &ShaderContext, pt: &mut ScreenPt) {
-    let matrix = context.view * context.camera * context.model;
+    let matrix = context.camera * context.model;
     pt.point = matrix.transform_point(&pt.point);
     let normal = context.model.transform_vector(&pt.normal);
     pt.set_normal(normal);

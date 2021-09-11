@@ -851,6 +851,14 @@ impl Rasterizer {
     }
   }
 
+  fn is_hidden_surface(&self, triangle: &Trig<ScreenPt>) -> bool {
+    let positive_direction: Vector3<f32> = [0.0, 0.0, 1.0].into();
+    let v1 = triangle.b().point - triangle.a().point;
+    let v2 = triangle.c().point - triangle.a().point;
+    let n = v1.cross(&v2);
+    n.dot(&positive_direction) < 0.0
+  }
+
   // do not check for zbuffer
   fn put_pixel(&mut self, coords: (i32, i32), color: Color) {
     if let Some(pixel) = self.image.pixel_mut(coords) {
@@ -970,6 +978,9 @@ impl Rasterizer {
     context: &ShaderContext,
     shader: &dyn Shader,
   ) {
+    if self.is_hidden_surface(trig) {
+      return;
+    }
     for trig in self.clip_triangle(&trig) {
       let mut pts: Vec<_> = trig.vertices().into();
 

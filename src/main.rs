@@ -1,8 +1,12 @@
-use std::{f32::consts::PI, path::Path, process::exit};
+use std::{
+  f32::consts::PI,
+  fs::read_dir,
+  path::{Path, PathBuf},
+};
 
 use eframe::{
   self,
-  egui::{self, Vec2},
+  egui::{self, ComboBox, Vec2},
   epi::{self, TextureAllocator},
   NativeOptions,
 };
@@ -23,6 +27,7 @@ struct RasterApp {
   texture_handle: Option<egui::TextureId>,
   image: Option<Image>,
   redraw: bool,
+  models: Vec<PathBuf>,
   tunable: Tunable,
 }
 
@@ -34,6 +39,7 @@ impl Default for RasterApp {
       image: None,
       redraw: true,
       tunable: Tunable::default(),
+      models: vec![],
     }
   }
 }
@@ -51,6 +57,7 @@ pub struct Tunable {
   trans_z: f32,
   mode: RasterizerMode,
   zbuffer_mode: bool,
+  model_file: PathBuf,
 }
 
 impl Default for Tunable {
@@ -68,6 +75,7 @@ impl Default for Tunable {
       trans_z: 4.7,
       mode: RasterizerMode::Shaded,
       zbuffer_mode: false,
+      model_file: "assets/pumpkin.obj".into(),
     }
   }
 }
@@ -106,24 +114,47 @@ impl RasterApp {
       }
     }
 
+    ui.separator();
+
+    self.draw_shader_options(ui);
+  }
+
+  fn draw_shader_options(&mut self, ui: &mut egui::Ui) {
+    use RasterizerMode::*;
+    let modes = [
+      (Wireframe, "Wireframe"),
+      (Shaded, "Shaded"),
+      (Clipped, "Clipped"),
+    ];
+
+    ui.horizontal(|ui| {
+      let t = &mut self.tunable;
+      for (mode, text) in modes {
+        if ui.radio_value(&mut t.mode, mode, text).clicked() {
+          self.redraw = true;
+        }
+      }
+    });
+
+    let t = &mut self.tunable;
     if ui.checkbox(&mut t.zbuffer_mode, "Z-buffer mode").changed() {
       self.redraw = true;
     }
 
-    ui.horizontal(|ui| {
-      use RasterizerMode::*;
+    let model_file_name = t.model_file.file_stem().unwrap().to_str().unwrap();
 
-      let t = &mut self.tunable;
-      if (ui.radio_value(&mut t.mode, Wireframe, "Wireframe")).clicked() {
-        self.redraw = true;
-      }
-      if (ui.radio_value(&mut t.mode, Shaded, "Shaded")).clicked() {
-        self.redraw = true;
-      }
-      if (ui.radio_value(&mut t.mode, Clipped, "Clipped")).clicked() {
-        self.redraw = true;
-      }
-    });
+    ComboBox::from_label("Select model")
+      .selected_text(model_file_name)
+      .show_ui(ui, |ui| {
+        for file in self.models.iter() {
+          let selected = &mut self.tunable.model_file;
+          let value = file.to_path_buf();
+          let text = file.file_stem().unwrap().to_str().unwrap();
+          if ui.selectable_value(selected, value, text).changed() {
+            self.redraw = true;
+          }
+        }
+      });
   }
 
   fn draw_canvas(&self, ui: &mut egui::Ui) {
@@ -165,6 +196,18 @@ impl RasterApp {
     self.image = Some(image);
     self.redraw = false;
   }
+
+  fn load_models(&mut self) {
+    let mut res = Vec::new();
+    for entry in read_dir("assets").expect("./assets not found") {
+      let path = entry.unwrap().path();
+      if path.extension() == Some("obj".as_ref()) {
+        res.push(path);
+      }
+    }
+
+    self.models = res;
+  }
 }
 
 impl epi::App for RasterApp {
@@ -181,6 +224,15 @@ impl epi::App for RasterApp {
       self.redraw_texture(frame.tex_allocator());
       self.draw_canvas(ui);
     });
+  }
+
+  fn setup(
+    &mut self,
+    _ctx: &egui::CtxRef,
+    _frame: &mut epi::Frame<'_>,
+    _storage: Option<&dyn epi::Storage>,
+  ) {
+    self.load_models()
   }
 }
 
@@ -220,8 +272,7 @@ fn sample_scene(tun: &Tunable) -> Scene {
   let rotation = Vector3::new(tun.rot_x, tun.rot_y, tun.rot_z);
   let translation = Vector3::new(tun.trans_x, tun.trans_y, tun.trans_z);
 
-  let wavefront =
-    Wavefront::from_file(Path::new("assets/pumpkin_nosubdiv.obj")).unwrap();
+  let wavefront = Wavefront::from_file(&tun.model_file).unwrap();
 
   scene.add_mesh(
     Mesh::new_wavefront(wavefront)

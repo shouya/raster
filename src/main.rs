@@ -237,9 +237,14 @@ impl epi::App for RasterApp {
 }
 
 fn main() {
-  let mut options: NativeOptions = Default::default();
-  options.initial_window_size = Some(Vec2::new(900.0, 600.0));
-  eframe::run_native(Box::new(RasterApp::default()), options);
+  let args: Vec<_> = std::env::args().collect();
+  if args.len() > 1 && args[1] == "bench" {
+    bench_render();
+  } else {
+    let mut options: NativeOptions = Default::default();
+    options.initial_window_size = Some(Vec2::new(900.0, 600.0));
+    eframe::run_native(Box::new(RasterApp::default()), options);
+  }
 }
 
 fn render_scene(tun: &Tunable, size: (usize, usize), scene: &Scene) -> Image {
@@ -288,4 +293,10 @@ fn sample_scene(tun: &Tunable) -> Scene {
   // ]));
 
   scene
+}
+
+fn bench_render() {
+  let tun = Tunable::default();
+  let scene = sample_scene(&tun);
+  render_scene(&tun, (600, 400), &scene);
 }

@@ -347,7 +347,7 @@ impl<'a> FaceRef<'a> {
     self.vertices.push(v);
   }
 
-  pub fn triangles(&self) -> impl Iterator<Item = Trig<&PolyVertRef<'a>>> + '_ {
+  pub fn tessellate(&self) -> impl Iterator<Item = Trig<&PolyVertRef<'a>>> + '_ {
     assert!(self.vertices.len() >= 3);
 
     let mut res = Vec::new();
@@ -553,6 +553,7 @@ impl Lerp for ScreenPt {
 }
 
 pub struct Rasterizer {
+  size: (f32, f32),
   mode: RasterizerMode,
   image: Image,
   zbuffer: Zbuffer,
@@ -563,8 +564,10 @@ impl Rasterizer {
     let image = Image::new(size);
     let zbuffer = Zbuffer::new(size);
     let mode = RasterizerMode::Shaded;
+    let size = (image.width() as f32, image.height() as f32);
 
     Self {
+      size,
       image,
       zbuffer,
       mode,
@@ -607,7 +610,7 @@ impl Rasterizer {
       let context = self.shader_context(camera, mesh);
 
       for face in mesh.faces() {
-        for trig in face.triangles() {
+        for trig in face.tessellate() {
           let trig = trig.convert();
           let trig = self.shade_triangle_vertices(&trig, &context, shader);
           self.fill_triangle(&trig, &context, shader);
@@ -623,7 +626,7 @@ impl Rasterizer {
       let context = self.shader_context(camera, mesh);
 
       for face in mesh.faces() {
-        for trig in face.triangles() {
+        for trig in face.tessellate() {
           let trig = trig.convert();
           let trig = self.shade_triangle_vertices(&trig, &context, shader);
           self.draw_triangle_clipped(&trig, &context, shader);
@@ -804,8 +807,8 @@ impl Rasterizer {
     ((x + 1.0) / 2.0 * w).round() as i32
   }
   pub fn to_y_coord(&self, y: f32) -> i32 {
-    let (w, h) = self.size_f32();
-    ((y + 1.0) / 2.0 * w).round() as i32
+    let (_w, h) = self.size_f32();
+    (h - (y + 1.0) / 2.0 * h).round() as i32
   }
 
   pub fn zbuffer_image(&self) -> Image {
@@ -816,12 +819,8 @@ impl Rasterizer {
     self.image
   }
 
-  pub fn size(&self) -> (usize, usize) {
-    (self.image.width(), self.image.height())
-  }
-
   pub fn size_f32(&self) -> (f32, f32) {
-    (self.image.width() as f32, self.image.height() as f32)
+    self.size
   }
 
   // checks the zbuffer
@@ -949,6 +948,9 @@ impl Rasterizer {
     shader: &dyn Shader,
   ) {
     for trig in self.clip_triangle(&trig) {
+      if self.is_hidden_surface(&trig) {
+        return;
+      }
       let pts: Vec<_> = trig.vertices().into();
       self.draw_line(pts[0], pts[1], &context, shader);
       self.draw_line(pts[1], pts[2], &context, shader);

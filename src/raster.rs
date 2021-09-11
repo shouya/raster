@@ -471,7 +471,7 @@ impl Scene {
 pub enum RasterizerMode {
   Wireframe,
   Shaded,
-  Zbuffer,
+  Clipped,
 }
 
 impl Default for RasterizerMode {
@@ -593,8 +593,8 @@ impl Rasterizer {
   pub fn rasterize(&mut self, scene: &Scene) {
     match self.mode {
       RasterizerMode::Shaded => self.rasterize_shaded(scene),
+      RasterizerMode::Clipped => self.rasterize_clipping(scene),
       RasterizerMode::Wireframe => self.rasterize_wireframe(scene),
-      RasterizerMode::Zbuffer => self.rasterize_shaded(scene),
     }
   }
 
@@ -621,14 +621,30 @@ impl Rasterizer {
   pub fn rasterize_shaded(&mut self, scene: &Scene) {
     let camera = scene.camera();
     for mesh in scene.iter_meshes() {
+      let shader = mesh.shader.as_ref();
+      let context = self.shader_context(camera, mesh);
+
       for face in mesh.faces() {
         for trig in face.triangles() {
-          self.fill_triangle(
-            camera,
-            &trig.convert(),
-            &mesh.transform,
-            mesh.shader.as_ref(),
-          );
+          let trig = trig.convert();
+          let trig = self.shade_triangle_vertices(&trig, &context, shader);
+          self.fill_triangle(&trig, &context, shader);
+        }
+      }
+    }
+  }
+
+  pub fn rasterize_clipping(&mut self, scene: &Scene) {
+    let camera = scene.camera();
+    for mesh in scene.iter_meshes() {
+      let shader = mesh.shader.as_ref();
+      let context = self.shader_context(camera, mesh);
+
+      for face in mesh.faces() {
+        for trig in face.triangles() {
+          let trig = trig.convert();
+          let trig = self.shade_triangle_vertices(&trig, &context, shader);
+          self.draw_triangle_clipped(&trig, &context, shader);
         }
       }
     }
@@ -796,11 +812,12 @@ impl Rasterizer {
     true
   }
 
+  pub fn zbuffer_image(&self) -> Image {
+    self.zbuffer.to_image()
+  }
+
   pub fn into_image(self) -> Image {
-    match self.mode {
-      RasterizerMode::Zbuffer => self.zbuffer.to_image(),
-      _ => self.image,
-    }
+    self.image
   }
 
   pub fn size(&self) -> (usize, usize) {
@@ -912,31 +929,49 @@ impl Rasterizer {
     }
   }
 
-  fn fill_triangle(
-    &mut self,
-    camera: &Camera,
-    triangle: &Trig<ScreenPt>,
-    model: &Matrix4<f32>,
-    shader: &dyn Shader,
-  ) {
-    let context = ShaderContext {
+  fn shader_context(&self, camera: &Camera, mesh: &Mesh) -> ShaderContext {
+    ShaderContext {
       view: self.view.clone(),
       camera: camera.matrix(),
-      model: model.clone(),
-    };
+      model: mesh.transform.clone(),
+    }
+  }
 
-    let trig = triangle.as_ref().map(|pt| {
+  fn shade_triangle_vertices(
+    &self,
+    trig: &Trig<ScreenPt>,
+    context: &ShaderContext,
+    shader: &dyn Shader,
+  ) -> Trig<ScreenPt> {
+    trig.as_ref().map(|pt| {
       let mut pt = pt.clone();
       shader.vertex(&context, &mut pt);
       pt
-    });
+    })
+  }
 
+  fn draw_triangle_clipped(
+    &mut self,
+    trig: &Trig<ScreenPt>,
+    context: &ShaderContext,
+    shader: &dyn Shader,
+  ) {
+    for trig in self.clip_triangle(&trig) {
+      let pts: Vec<_> = trig.vertices().into();
+      self.draw_line(pts[0], pts[1], &context, shader);
+      self.draw_line(pts[1], pts[2], &context, shader);
+      self.draw_line(pts[2], pts[0], &context, shader);
+    }
+  }
+
+  fn fill_triangle(
+    &mut self,
+    trig: &Trig<ScreenPt>,
+    context: &ShaderContext,
+    shader: &dyn Shader,
+  ) {
     for trig in self.clip_triangle(&trig) {
       let mut pts: Vec<_> = trig.vertices().into();
-
-      // self.draw_line(pts[0], pts[1], &context, shader);
-      // self.draw_line(pts[1], pts[2], &context, shader);
-      // self.draw_line(pts[2], pts[0], &context, shader);
 
       let [upper, lower] = Self::horizontally_split_triangle(
         pts.as_mut_slice().try_into().unwrap(),

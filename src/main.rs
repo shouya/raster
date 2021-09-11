@@ -1,6 +1,11 @@
 use std::{f32::consts::PI, path::Path, process::exit};
 
-use eframe::{self, NativeOptions, egui::{self, Vec2}, epi::{self, TextureAllocator}};
+use eframe::{
+  self,
+  egui::{self, Vec2},
+  epi::{self, TextureAllocator},
+  NativeOptions,
+};
 use nalgebra::{Matrix4, Vector3};
 use raster::{Camera, Mesh, Rasterizer, RasterizerMode, Scene};
 use wavefront::Wavefront;
@@ -45,6 +50,7 @@ pub struct Tunable {
   trans_y: f32,
   trans_z: f32,
   mode: RasterizerMode,
+  zbuffer_mode: bool,
 }
 
 impl Default for Tunable {
@@ -61,6 +67,7 @@ impl Default for Tunable {
       trans_y: 0.0,
       trans_z: 4.7,
       mode: RasterizerMode::Shaded,
+      zbuffer_mode: false,
     }
   }
 }
@@ -99,6 +106,10 @@ impl RasterApp {
       }
     }
 
+    if ui.checkbox(&mut t.zbuffer_mode, "Z-buffer mode").changed() {
+      self.redraw = true;
+    }
+
     ui.horizontal(|ui| {
       use RasterizerMode::*;
 
@@ -109,7 +120,7 @@ impl RasterApp {
       if (ui.radio_value(&mut t.mode, Shaded, "Shaded")).clicked() {
         self.redraw = true;
       }
-      if (ui.radio_value(&mut t.mode, Zbuffer, "Zbuffer")).clicked() {
+      if (ui.radio_value(&mut t.mode, Clipped, "Clipped")).clicked() {
         self.redraw = true;
       }
     });
@@ -153,7 +164,6 @@ impl RasterApp {
     self.texture_handle = Some(texture_id);
     self.image = Some(image);
     self.redraw = false;
-    // exit(0);
   }
 }
 
@@ -184,7 +194,12 @@ fn render_scene(tun: &Tunable, size: (usize, usize), scene: &Scene) -> Image {
   let mut raster = Rasterizer::new(size);
   raster.set_mode(tun.mode);
   raster.rasterize(&scene);
-  raster.into_image()
+
+  if tun.zbuffer_mode {
+    raster.zbuffer_image()
+  } else {
+    raster.into_image()
+  }
 }
 
 fn sample_scene(tun: &Tunable) -> Scene {

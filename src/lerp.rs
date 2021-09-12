@@ -1,4 +1,4 @@
-use nalgebra::Point3;
+use nalgebra::{Point3, Vector2, Vector3, Vector4};
 
 pub trait Lerp {
   fn lerp(&self, other: &Self, t: f32) -> Self;
@@ -13,16 +13,6 @@ impl Lerp for f32 {
 impl Lerp for i32 {
   fn lerp(&self, other: &Self, t: f32) -> Self {
     self + ((other - self) as f32 * t).round() as Self
-  }
-}
-
-impl Lerp for Point3<f32> {
-  fn lerp(&self, other: &Self, t: f32) -> Self {
-    Point3::new(
-      lerp(t, &self.x, &other.x),
-      lerp(t, &self.y, &other.y),
-      lerp(t, &self.z, &other.z),
-    )
   }
 }
 
@@ -111,5 +101,42 @@ where
     count,
     max: count,
     curr: 0,
+  }
+}
+
+impl Lerp for Vector4<f32> {
+  fn lerp(&self, other: &Self, t: f32) -> Self {
+    Vector4::new(
+      lerp(t, &self.x, &other.x),
+      lerp(t, &self.y, &other.y),
+      lerp(t, &self.z, &other.z),
+      lerp(t, &self.w, &other.w),
+    )
+  }
+}
+
+impl Lerp for Vector3<f32> {
+  fn lerp(&self, other: &Self, t: f32) -> Self {
+    Vector3::new(
+      lerp(t, &self.x, &other.x),
+      lerp(t, &self.y, &other.y),
+      lerp(t, &self.z, &other.z),
+    )
+  }
+}
+
+impl Lerp for Point3<f32> {
+  fn lerp(&self, other: &Self, t: f32) -> Self {
+    Point3::new(
+      lerp(t, &self.x, &other.x),
+      lerp(t, &self.y, &other.y),
+      lerp(t, &self.z, &other.z),
+    )
+  }
+}
+
+impl Lerp for Vector2<f32> {
+  fn lerp(&self, other: &Self, t: f32) -> Self {
+    Vector2::new(lerp(t, &self.x, &other.x), lerp(t, &self.y, &other.y))
   }
 }

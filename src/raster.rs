@@ -511,9 +511,9 @@ impl Lerp for ScreenPt {
     ScreenPt {
       point: lerp(t, &self.point, &other.point),
       orig_point: lerp(t, &self.orig_point, &other.orig_point),
-      normal: self.normal.lerp(&other.normal, t),
-      color: self.color.lerp(&other.color, t),
-      uv: self.uv.lerp(&other.uv, t),
+      normal: lerp(t, &self.normal, &other.normal),
+      color: lerp(t, &self.color, &other.color),
+      uv: lerp(t, &self.uv, &other.uv),
     }
   }
 }

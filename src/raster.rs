@@ -754,18 +754,18 @@ impl Rasterizer {
   pub fn to_coords(&self, pt: &Pt) -> (i32, i32) {
     let (w, h) = self.size_f32();
     let point = pt.point;
-    let x = ((point.x + 1.0) / 2.0 * w) as i32;
-    let y = (h - (point.y + 1.0) / 2.0 * h) as i32;
-    (x, y)
+    let x = 0.5 * w * (point.x + 1.0);
+    let y = 0.5 * h * (1.0 - point.y);
+    (x as i32, y as i32)
   }
 
   pub fn to_x_coord(&self, x: f32) -> i32 {
     let (w, _h) = self.size_f32();
-    ((x + 1.0) / 2.0 * w) as i32
+    (0.5 * (x + 1.0) * w) as i32
   }
   pub fn to_y_coord(&self, y: f32) -> i32 {
     let (_w, h) = self.size_f32();
-    (h - (y + 1.0) / 2.0 * h) as i32
+    (0.5 * h * (1.0 - y)) as i32
   }
 
   pub fn zbuffer_image(&self) -> Image<Color> {
@@ -937,7 +937,7 @@ impl Rasterizer {
   }
 
   fn horizontally_split_triangle(pts: &mut [Pt; 3]) -> [Option<[Pt; 3]>; 2] {
-    const EPS: f32 = 0.003;
+    const EPS: f32 = 0.0001;
     pts.sort_unstable_by(|p1, p2| f32_cmp(&p1.y(), &p2.y()));
 
     if abs_diff_eq!(pts[0].y(), pts[2].y(), epsilon = EPS) {

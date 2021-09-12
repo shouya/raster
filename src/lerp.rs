@@ -37,6 +37,18 @@ where
   }
 }
 
+impl<T: Lerp> Lerp for Option<T> {
+  fn lerp(&self, other: &Self, t: f32) -> Self {
+    if let Some(a) = self.as_ref() {
+      if let Some(b) = other.as_ref() {
+        return Some(lerp(t, a, b));
+      }
+    }
+    None
+  }
+}
+
+#[inline]
 pub fn lerp<T>(t: f32, from: &T, to: &T) -> T
 where
   T: Lerp,

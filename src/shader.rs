@@ -1,6 +1,6 @@
 use nalgebra::{Matrix4, Point3, Vector4};
 
-use crate::raster::{Color, ScreenPt};
+use crate::raster::{Color, Pt};
 
 pub struct ShaderContext {
   pub camera: Matrix4<f32>,
@@ -8,14 +8,15 @@ pub struct ShaderContext {
 }
 
 pub trait Shader {
-  fn vertex(&self, context: &ShaderContext, pt: &mut ScreenPt) {
+  fn vertex(&self, context: &ShaderContext, pt: &mut Pt) {
     let matrix = context.camera * context.model;
     pt.point = matrix.transform_point(&pt.point);
     let normal = context.model.transform_vector(&pt.normal);
     pt.set_normal(normal);
+    pt.buf_v3 = Some(context.model.transform_point(&pt.orig_point).coords);
   }
 
-  fn fragment(&self, context: &ShaderContext, pt: &mut ScreenPt);
+  fn fragment(&self, context: &ShaderContext, pt: &mut Pt);
 }
 
 pub struct PureColor {
@@ -30,7 +31,7 @@ impl PureColor {
 }
 
 impl Shader for PureColor {
-  fn fragment(&self, _context: &ShaderContext, point: &mut ScreenPt) {
+  fn fragment(&self, _context: &ShaderContext, point: &mut Pt) {
     point.color = self.color;
   }
 }
@@ -39,6 +40,7 @@ pub struct DiffuseShader {
   color: Color,
   light: Color,
   light_pos: Point3<f32>,
+  // using buf_v3 for world position
 }
 
 impl DiffuseShader {
@@ -52,10 +54,9 @@ impl DiffuseShader {
 }
 
 impl Shader for DiffuseShader {
-  fn fragment(&self, context: &ShaderContext, pt: &mut ScreenPt) {
-    let orig_position = context.model.transform_point(&pt.orig_point);
-
-    let light_angle = (self.light_pos - orig_position).normalize();
+  fn fragment(&self, _context: &ShaderContext, pt: &mut Pt) {
+    let world_pos = pt.buf_v3.unwrap();
+    let light_angle = (self.light_pos.coords - world_pos).normalize();
     let light_intensity =
       f32::max(light_angle.dot(&pt.normal.normalize()), 0.0);
     let ambient = self.color * 0.1;

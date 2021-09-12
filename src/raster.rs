@@ -450,15 +450,17 @@ impl Default for RasterizerMode {
 
 /// A point on screen with integer xy coordinates and floating depth (z)
 #[derive(PartialEq, Clone, Copy, Debug)]
-pub struct ScreenPt {
+pub struct Pt {
   pub point: Point3<f32>,
   pub orig_point: Point3<f32>,
   pub color: Color,
   pub normal: Vector3<f32>,
   pub uv: Vector2<f32>,
+  pub buf_v2: Option<Vector2<f32>>,
+  pub buf_v3: Option<Vector3<f32>>,
 }
 
-impl<'a> From<&PolyVertRef<'a>> for ScreenPt {
+impl<'a> From<&PolyVertRef<'a>> for Pt {
   fn from(v: &PolyVertRef<'a>) -> Self {
     let mut pt = Self::new(*v.vertex);
     if let Some(uv) = v.texture_coords {
@@ -471,7 +473,7 @@ impl<'a> From<&PolyVertRef<'a>> for ScreenPt {
   }
 }
 
-impl ScreenPt {
+impl Pt {
   pub fn new(point: Point3<f32>) -> Self {
     Self {
       point,
@@ -479,6 +481,8 @@ impl ScreenPt {
       color: COLOR::rgba(1.0, 0.0, 0.0, 1.0),
       uv: Vector2::new(0.0, 0.0),
       normal: point.coords,
+      buf_v2: None,
+      buf_v3: None
     }
   }
 
@@ -502,18 +506,20 @@ impl ScreenPt {
   }
 }
 
-impl Lerp for ScreenPt {
+impl Lerp for Pt {
   fn lerp(&self, other: &Self, t: f32) -> Self {
     if self == other {
       return *self;
     }
 
-    ScreenPt {
+    Pt {
       point: lerp(t, &self.point, &other.point),
       orig_point: lerp(t, &self.orig_point, &other.orig_point),
       normal: lerp(t, &self.normal, &other.normal),
       color: lerp(t, &self.color, &other.color),
       uv: lerp(t, &self.uv, &other.uv),
+      buf_v2: lerp(t, &self.buf_v2, &other.buf_v2),
+      buf_v3: lerp(t, &self.buf_v3, &other.buf_v3),
     }
   }
 }
@@ -556,7 +562,7 @@ impl Rasterizer {
     let camera = scene.camera();
     for mesh in scene.iter_meshes() {
       for face in mesh.faces() {
-        let mut face: Face<ScreenPt> = face.as_ref().convert();
+        let mut face: Face<Pt> = face.as_ref().convert();
         let context = self.shader_context(camera, mesh);
         let shader = mesh.shader.as_ref();
 
@@ -601,7 +607,7 @@ impl Rasterizer {
     }
   }
 
-  fn clip_triangle(&self, _trig: &Trig<ScreenPt>) -> Vec<Trig<ScreenPt>> {
+  fn clip_triangle(&self, _trig: &Trig<Pt>) -> Vec<Trig<Pt>> {
     vec![&_trig]
       .into_iter()
       .flat_map(|t| self.clip_triangle_component(&t, |p| p.point.z, -1.0, -1.0))
@@ -615,13 +621,13 @@ impl Rasterizer {
 
   fn clip_triangle_component<F>(
     &self,
-    trig: &Trig<ScreenPt>,
+    trig: &Trig<Pt>,
     get_comp: F,
     lim: f32,
     sign: f32,
-  ) -> Vec<Trig<ScreenPt>>
+  ) -> Vec<Trig<Pt>>
   where
-    F: Fn(&ScreenPt) -> f32,
+    F: Fn(&Pt) -> f32,
   {
     let (va, vb, vc) = (trig.a(), trig.b(), trig.c());
     let v: [f32; 3] = trig.as_ref().map(get_comp).vertices();
@@ -682,10 +688,10 @@ impl Rasterizer {
   }
 
   // return false if the line is off-view and should be skipped
-  fn clip_line(&self, a: &mut ScreenPt, b: &mut ScreenPt) -> bool {
-    let get_x = |p: &ScreenPt| p.point.x;
-    let get_y = |p: &ScreenPt| p.point.y;
-    let get_z = |p: &ScreenPt| p.point.z;
+  fn clip_line(&self, a: &mut Pt, b: &mut Pt) -> bool {
+    let get_x = |p: &Pt| p.point.x;
+    let get_y = |p: &Pt| p.point.y;
+    let get_z = |p: &Pt| p.point.z;
 
     if !Self::clip_line_component(a, b, get_x, -1.0, 1.0) {
       return false;
@@ -702,14 +708,14 @@ impl Rasterizer {
 
   // return false if the line is off-view and should be skipped
   fn clip_line_component<F>(
-    a: &mut ScreenPt,
-    b: &mut ScreenPt,
+    a: &mut Pt,
+    b: &mut Pt,
     get_comp: F,
     min: f32,
     max: f32,
   ) -> bool
   where
-    F: Fn(&ScreenPt) -> f32,
+    F: Fn(&Pt) -> f32,
   {
     let mut av = get_comp(a);
     let mut bv = get_comp(b);
@@ -758,13 +764,11 @@ impl Rasterizer {
     true
   }
 
-  pub fn to_coords(&self, pt: &ScreenPt) -> (i32, i32) {
+  pub fn to_coords(&self, pt: &Pt) -> (i32, i32) {
     let (w, h) = self.size_f32();
     let point = pt.point;
     let x = ((point.x + 1.0) / 2.0 * w).round() as i32;
     let y = (h - (point.y + 1.0) / 2.0 * h).round() as i32;
-    assert!(x >= 0);
-    assert!(y >= 0);
     (x, y)
   }
 
@@ -792,7 +796,7 @@ impl Rasterizer {
   // checks the zbuffer
   fn draw_pixel(
     &mut self,
-    mut p: ScreenPt,
+    mut p: Pt,
     context: &ShaderContext,
     shader: &dyn Shader,
   ) {
@@ -809,7 +813,7 @@ impl Rasterizer {
     }
   }
 
-  fn is_hidden_surface(&self, triangle: &Trig<ScreenPt>) -> bool {
+  fn is_hidden_surface(&self, triangle: &Trig<Pt>) -> bool {
     let positive_direction: Vector3<f32> = [0.0, 0.0, 1.0].into();
     let v1 = triangle.b().point - triangle.a().point;
     let v2 = triangle.c().point - triangle.a().point;
@@ -826,8 +830,8 @@ impl Rasterizer {
 
   fn draw_line(
     &mut self,
-    mut p1: ScreenPt,
-    mut p2: ScreenPt,
+    mut p1: Pt,
+    mut p2: Pt,
     context: &ShaderContext,
     shader: &dyn Shader,
   ) {
@@ -849,9 +853,9 @@ impl Rasterizer {
   // fill a triangle that is flat at bottom
   fn fill_upper_triangle(
     &mut self,
-    top: ScreenPt,
-    bottom_left: ScreenPt,
-    bottom_right: ScreenPt,
+    top: Pt,
+    bottom_left: Pt,
+    bottom_right: Pt,
     context: &ShaderContext,
     shader: &dyn Shader,
   ) {
@@ -869,9 +873,9 @@ impl Rasterizer {
 
   fn fill_lower_triangle(
     &mut self,
-    top_left: ScreenPt,
-    top_right: ScreenPt,
-    bottom: ScreenPt,
+    top_left: Pt,
+    top_right: Pt,
+    bottom: Pt,
     context: &ShaderContext,
     shader: &dyn Shader,
   ) {
@@ -896,7 +900,7 @@ impl Rasterizer {
 
   fn shade_triangle_vertices(
     &self,
-    trig: &mut Trig<ScreenPt>,
+    trig: &mut Trig<Pt>,
     context: &ShaderContext,
     shader: &dyn Shader,
   ) {
@@ -905,7 +909,7 @@ impl Rasterizer {
 
   fn draw_triangle_clipped(
     &mut self,
-    trig: &Trig<ScreenPt>,
+    trig: &Trig<Pt>,
     context: &ShaderContext,
     shader: &dyn Shader,
   ) {
@@ -922,7 +926,7 @@ impl Rasterizer {
 
   fn fill_triangle(
     &mut self,
-    trig: &Trig<ScreenPt>,
+    trig: &Trig<Pt>,
     context: &ShaderContext,
     shader: &dyn Shader,
   ) {
@@ -952,9 +956,7 @@ impl Rasterizer {
     }
   }
 
-  fn horizontally_split_triangle(
-    pts: &mut [ScreenPt; 3],
-  ) -> [Option<[ScreenPt; 3]>; 2] {
+  fn horizontally_split_triangle(pts: &mut [Pt; 3]) -> [Option<[Pt; 3]>; 2] {
     const EPS: f32 = 0.003;
     pts.sort_unstable_by(|p1, p2| f32_cmp(&p1.y(), &p2.y()));
 
@@ -989,8 +991,8 @@ impl Rasterizer {
 
   fn draw_horizontal_line(
     &mut self,
-    p1: ScreenPt,
-    p2: ScreenPt,
+    p1: Pt,
+    p2: Pt,
     context: &ShaderContext,
     shader: &dyn Shader,
   ) {

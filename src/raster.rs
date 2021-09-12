@@ -189,30 +189,12 @@ impl<'a, T> Trig<T> {
     }
   }
 
-  pub fn map_in_place<F>(&mut self, f: F)
-  where
-    F: Fn(&mut T) -> (),
-  {
-    f(&mut self.vertices[0]);
-    f(&mut self.vertices[1]);
-    f(&mut self.vertices[2]);
-  }
-
   pub fn map<S, F>(self, f: F) -> Trig<S>
   where
     F: Fn(T) -> S,
   {
     Trig {
       vertices: self.vertices.map(|x| f(x)),
-    }
-  }
-
-  pub fn convert<S>(self) -> Trig<S>
-  where
-    S: From<T>,
-  {
-    Trig {
-      vertices: self.vertices.map(|x| x.into()),
     }
   }
 }
@@ -242,15 +224,18 @@ impl<T> Face<T> {
     }
   }
 
-  pub fn triangulate(&self) -> impl Iterator<Item = Trig<&T>> + '_ {
+  pub fn triangulate(&self) -> impl Iterator<Item = Trig<T>>
+  where
+    T: Copy,
+  {
     assert!(self.vertices.len() >= 3);
 
     let mut res = Vec::new();
 
-    let v0 = &self.vertices[0];
+    let v0 = self.vertices[0];
     let vs = self.vertices.iter().skip(1).collect::<Vec<_>>();
     for v in vs.windows(2) {
-      res.push(Trig::from([v0, v[0], v[1]]));
+      res.push(Trig::from([v0, *v[0], *v[1]]));
     }
 
     res.into_iter()
@@ -482,7 +467,7 @@ impl Pt {
       uv: Vector2::new(0.0, 0.0),
       normal: point.coords,
       buf_v2: None,
-      buf_v3: None
+      buf_v3: None,
     }
   }
 
@@ -582,9 +567,10 @@ impl Rasterizer {
       let context = self.shader_context(camera, mesh);
 
       for face in mesh.faces() {
+        let mut face = face.as_ref().convert();
+        face.map_in_place(|mut p| mesh.shader.vertex(&context, &mut p));
+
         for trig in face.triangulate() {
-          let mut trig = trig.convert();
-          self.shade_triangle_vertices(&mut trig, &context, shader);
           self.fill_triangle(&trig, &context, shader);
         }
       }
@@ -598,9 +584,10 @@ impl Rasterizer {
       let context = self.shader_context(camera, mesh);
 
       for face in mesh.faces() {
+        let mut face = face.as_ref().convert();
+        face.map_in_place(|mut p| mesh.shader.vertex(&context, &mut p));
+
         for trig in face.triangulate() {
-          let mut trig = trig.convert();
-          self.shade_triangle_vertices(&mut trig, &context, shader);
           self.draw_triangle_clipped(&trig, &context, shader);
         }
       }
@@ -767,22 +754,24 @@ impl Rasterizer {
   pub fn to_coords(&self, pt: &Pt) -> (i32, i32) {
     let (w, h) = self.size_f32();
     let point = pt.point;
-    let x = ((point.x + 1.0) / 2.0 * w).round() as i32;
-    let y = (h - (point.y + 1.0) / 2.0 * h).round() as i32;
+    let x = ((point.x + 1.0) / 2.0 * w) as i32;
+    let y = (h - (point.y + 1.0) / 2.0 * h) as i32;
     (x, y)
   }
 
   pub fn to_x_coord(&self, x: f32) -> i32 {
     let (w, _h) = self.size_f32();
-    ((x + 1.0) / 2.0 * w).round() as i32
+    ((x + 1.0) / 2.0 * w) as i32
   }
   pub fn to_y_coord(&self, y: f32) -> i32 {
     let (_w, h) = self.size_f32();
-    (h - (y + 1.0) / 2.0 * h).round() as i32
+    (h - (y + 1.0) / 2.0 * h) as i32
   }
 
   pub fn zbuffer_image(&self) -> Image<Color> {
-    self.zbuffer.clone().map(|d| COLOR::rgb(d, d, d))
+    let to_comp = |d| (d + 1.0) / 2.0;
+    let to_color = |d| COLOR::rgb(to_comp(d), to_comp(d), to_comp(d));
+    self.zbuffer.clone().map(to_color)
   }
 
   pub fn into_image(self) -> Image<Color> {
@@ -896,15 +885,6 @@ impl Rasterizer {
       camera: camera.matrix(),
       model: mesh.transform.clone(),
     }
-  }
-
-  fn shade_triangle_vertices(
-    &self,
-    trig: &mut Trig<Pt>,
-    context: &ShaderContext,
-    shader: &dyn Shader,
-  ) {
-    trig.map_in_place(|pt| shader.vertex(&context, pt))
   }
 
   fn draw_triangle_clipped(

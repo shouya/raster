@@ -1,7 +1,7 @@
 use std::{cmp::max, convert::TryInto};
 
 use approx::abs_diff_eq;
-use nalgebra::{Matrix4, Orthographic3, Point3, Vector2, Vector3, Vector4};
+use nalgebra::{Matrix4, Point3, Vector2, Vector3, Vector4};
 
 use crate::{
   lerp::{lerp, lerp_closed_iter, Lerp},
@@ -25,18 +25,20 @@ pub(crate) mod COLOR {
 }
 
 #[derive(Debug, Clone)]
-pub struct Image {
+pub struct Image<T> {
   dimension: (usize, usize),
-  pixels: Vec<Color>,
+  pixels: Vec<T>,
 }
 
-impl Image {
-  pub fn new(size: (usize, usize)) -> Self {
+impl<T> Image<T> {
+  pub fn new(size: (usize, usize)) -> Self
+  where
+    T: Default,
+  {
     let len = size.0 * size.1;
     let mut buffer = Vec::with_capacity(len);
-    let clear_color = Vector4::new(0.0, 0.0, 0.0, 1.0);
     for _ in 0..len {
-      buffer.push(clear_color);
+      buffer.push(Default::default());
     }
 
     Self {
@@ -45,7 +47,7 @@ impl Image {
     }
   }
 
-  pub fn pixels(&self) -> impl Iterator<Item = &Color> {
+  pub fn pixels(&self) -> impl Iterator<Item = &T> {
     self.pixels.iter()
   }
 
@@ -57,7 +59,7 @@ impl Image {
     self.dimension.1
   }
 
-  pub fn pixel(&self, coords: (i32, i32)) -> Option<&Color> {
+  pub fn pixel(&self, coords: (i32, i32)) -> Option<&T> {
     if coords.0 < 0
       || coords.1 < 0
       || coords.0 >= self.width() as i32
@@ -69,7 +71,7 @@ impl Image {
     self.pixels.get(idx as usize)
   }
 
-  pub fn pixel_mut(&mut self, coords: (i32, i32)) -> Option<&mut Color> {
+  pub fn pixel_mut(&mut self, coords: (i32, i32)) -> Option<&mut T> {
     if coords.0 < 0
       || coords.1 < 0
       || coords.0 >= self.width() as i32
@@ -80,79 +82,26 @@ impl Image {
     let idx = coords.1 * self.width() as i32 + coords.0;
     self.pixels.get_mut(idx as usize)
   }
-}
 
-#[derive(Debug, Clone)]
-pub struct Zbuffer {
-  dimension: (usize, usize),
-  // -1: unoccupied
-  // 0..inf: distance
-  buffer: Vec<f32>,
-}
-
-impl Zbuffer {
-  pub fn new(size: (usize, usize)) -> Self {
-    let len = size.0 * size.1;
-    let mut buffer = Vec::with_capacity(len);
-    for _ in 0..len {
-      buffer.push(10.0);
-    }
-
-    Self {
-      dimension: size,
-      buffer,
-    }
-  }
-
-  pub fn width(&self) -> usize {
-    self.dimension.0
-  }
-
-  pub fn height(&self) -> usize {
-    self.dimension.1
-  }
-
-  pub fn depth(&self, coords: (i32, i32)) -> Option<&f32> {
+  pub fn put_pixel(&mut self, coords: (i32, i32), value: T) {
     if coords.0 < 0
       || coords.1 < 0
       || coords.0 >= self.width() as i32
       || coords.1 >= self.height() as i32
     {
-      return None;
+      return;
     }
-
     let idx = coords.1 * self.width() as i32 + coords.0;
-    self.buffer.get(idx as usize)
+    *self.pixels.get_mut(idx as usize).unwrap() = value;
   }
 
-  pub fn put_depth(&mut self, coords: (i32, i32), d: f32) -> Option<()> {
-    if coords.0 < 0
-      || coords.1 < 0
-      || coords.0 >= self.width() as i32
-      || coords.1 >= self.height() as i32
-    {
-      return None;
-    }
-
-    if d < 0.0 || d > 1.0 {
-      return None;
-    }
-
-    let idx = coords.1 * self.width() as i32 + coords.0;
-    self.buffer[idx as usize] = d;
-    Some(())
-  }
-
-  pub fn to_image(&self) -> Image {
-    let mut img = Image::new(self.dimension);
-    for x in 0..self.width() {
-      for y in 0..self.height() {
-        let coords = (x as i32, y as i32);
-        let d = *self.depth(coords).unwrap();
-        *img.pixel_mut(coords).unwrap() = COLOR::rgb(d, d, d);
-      }
-    }
-    img
+  pub fn map<F, S>(self, f: F) -> Image<S>
+  where
+    F: Fn(T) -> S,
+  {
+    let dimension = self.dimension;
+    let pixels = self.pixels.into_iter().map(f).collect();
+    Image { pixels, dimension }
   }
 }
 
@@ -566,14 +515,14 @@ impl Lerp for ScreenPt {
 pub struct Rasterizer {
   size: (f32, f32),
   mode: RasterizerMode,
-  image: Image,
-  zbuffer: Zbuffer,
+  image: Image<Color>,
+  zbuffer: Image<f32>,
 }
 
 impl Rasterizer {
   pub fn new(size: (usize, usize)) -> Self {
     let image = Image::new(size);
-    let zbuffer = Zbuffer::new(size);
+    let zbuffer = Image::new(size);
     let mode = RasterizerMode::Shaded;
     let size = (image.width() as f32, image.height() as f32);
 
@@ -822,11 +771,11 @@ impl Rasterizer {
     (h - (y + 1.0) / 2.0 * h).round() as i32
   }
 
-  pub fn zbuffer_image(&self) -> Image {
-    self.zbuffer.to_image()
+  pub fn zbuffer_image(&self) -> Image<Color> {
+    self.zbuffer.clone().map(|d| COLOR::rgb(d, d, d))
   }
 
-  pub fn into_image(self) -> Image {
+  pub fn into_image(self) -> Image<Color> {
     self.image
   }
 
@@ -843,13 +792,13 @@ impl Rasterizer {
   ) {
     let coords = self.to_coords(&p);
 
-    match self.zbuffer.depth(coords) {
+    match self.zbuffer.pixel(coords) {
       None => return,
       Some(d) if p.depth() > *d => return,
       Some(_) => {
         shader.fragment(context, &mut p);
         self.put_pixel(coords, p.color);
-        self.zbuffer.put_depth(coords, p.depth());
+        self.zbuffer.put_pixel(coords, p.depth());
       }
     }
   }

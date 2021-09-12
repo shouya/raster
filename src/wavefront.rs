@@ -9,7 +9,7 @@ pub struct Wavefront {
   pub vertices: Vec<Point3<f32>>,
   pub vertex_normals: Vec<Vector3<f32>>,
   pub texture_coords: Vec<Vector2<f32>>,
-  pub faces: Vec<Face>,
+  pub faces: Vec<Face<PolyVert>>,
 }
 
 impl Wavefront {
@@ -61,7 +61,7 @@ impl Wavefront {
       .map_err(anyhow::Error::from)
   }
 
-  fn parse_face(slices: &[&str]) -> anyhow::Result<Face> {
+  fn parse_face(slices: &[&str]) -> anyhow::Result<Face<PolyVert>> {
     let mut face = Face::new();
     for v in slices {
       let indices: Vec<Result<usize, _>> =

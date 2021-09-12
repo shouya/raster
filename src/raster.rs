@@ -218,22 +218,70 @@ impl<'a, T> Trig<T> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Face {
-  vertices: Vec<PolyVert>,
+pub struct Face<T> {
+  vertices: Vec<T>,
 }
 
-impl Face {
-  pub fn new() -> Face {
+impl<T> Face<T> {
+  pub fn new() -> Self {
     Face {
       vertices: Vec::new(),
     }
   }
-  pub fn add_vert(&mut self, v: PolyVert) {
+  pub fn add_vert(&mut self, v: T) {
     self.vertices.push(v);
   }
 
-  pub fn vertices(&self) -> &[PolyVert] {
+  pub fn vertices(&self) -> &[T] {
     self.vertices.as_ref()
+  }
+
+  pub fn as_ref(&self) -> Face<&T> {
+    Face {
+      vertices: self.vertices.iter().collect(),
+    }
+  }
+
+  pub fn triangulate(&self) -> impl Iterator<Item = Trig<&T>> + '_ {
+    assert!(self.vertices.len() >= 3);
+
+    let mut res = Vec::new();
+
+    let v0 = &self.vertices[0];
+    let vs = self.vertices.iter().skip(1).collect::<Vec<_>>();
+    for v in vs.windows(2) {
+      res.push(Trig::from([v0, v[0], v[1]]));
+    }
+
+    res.into_iter()
+  }
+
+  pub fn convert<S>(self) -> Face<S>
+  where
+    S: From<T>,
+  {
+    Face {
+      vertices: self.vertices.into_iter().map(|x| x.into()).collect(),
+    }
+  }
+
+  pub fn edges(&self) -> impl Iterator<Item = (T, T)> + '_
+  where
+    T: Copy,
+  {
+    let n = self.vertices.len();
+    (0..n).map(move |i| {
+      let a = self.vertices[i];
+      let b = self.vertices[(i + 1) % n];
+      (a, b)
+    })
+  }
+
+  pub fn map_in_place<F>(&mut self, f: F)
+  where
+    F: Fn(&mut T) -> (),
+  {
+    self.vertices.iter_mut().for_each(f)
   }
 }
 
@@ -283,52 +331,10 @@ impl PolyVert {
 }
 
 #[derive(Debug, Clone)]
-pub struct FaceRef<'a> {
-  vertices: Vec<PolyVertRef<'a>>,
-}
-
-#[derive(Debug, Clone)]
 pub struct PolyVertRef<'a> {
   pub vertex: &'a Point3<f32>,
   pub texture_coords: Option<&'a Vector2<f32>>,
   pub normal: Option<&'a Vector3<f32>>,
-}
-
-impl<'a> FaceRef<'a> {
-  pub fn new() -> Self {
-    Self {
-      vertices: Vec::new(),
-    }
-  }
-
-  pub fn add_vert(&mut self, v: PolyVertRef<'a>) {
-    self.vertices.push(v);
-  }
-
-  pub fn tessellate(
-    &self,
-  ) -> impl Iterator<Item = Trig<&PolyVertRef<'a>>> + '_ {
-    assert!(self.vertices.len() >= 3);
-
-    let mut res = Vec::new();
-
-    let v0 = &self.vertices[0];
-    let vs = self.vertices.iter().skip(1).collect::<Vec<_>>();
-    for v in vs.windows(2) {
-      res.push(Trig::from([v0, v[0], v[1]]));
-    }
-
-    res.into_iter()
-  }
-
-  pub fn edges(&self) -> impl Iterator<Item = (ScreenPt, ScreenPt)> + '_ {
-    let n = self.vertices.len();
-    (0..n).map(move |i| {
-      let a = &self.vertices[i];
-      let b = &self.vertices[(i + 1) % n];
-      (ScreenPt::from(a), ScreenPt::from(b))
-    })
-  }
 }
 
 pub struct Mesh {
@@ -336,7 +342,7 @@ pub struct Mesh {
   vertices: Vec<Point3<f32>>,
   vertex_normals: Vec<Vector3<f32>>,
   texture_coords: Vec<Vector2<f32>>,
-  faces: Vec<Face>,
+  faces: Vec<Face<PolyVert>>,
   shader: Box<dyn Shader>,
 }
 
@@ -377,12 +383,12 @@ impl Mesh {
     }
   }
 
-  pub fn faces(&self) -> impl Iterator<Item = FaceRef<'_>> {
+  pub fn faces(&self) -> impl Iterator<Item = Face<PolyVertRef<'_>>> {
     self.faces.iter().map(move |f| self.get_face(f))
   }
 
-  pub fn get_face(&self, face: &Face) -> FaceRef<'_> {
-    let mut res = FaceRef::new();
+  pub fn get_face(&self, face: &Face<PolyVert>) -> Face<PolyVertRef<'_>> {
+    let mut res = Face::new();
     for vert in face.vertices() {
       let vertex = &self.vertices[vert.vertex_index];
       let texture_coords = vert.texture_index.map(|i| &self.texture_coords[i]);
@@ -550,13 +556,13 @@ impl Rasterizer {
     let camera = scene.camera();
     for mesh in scene.iter_meshes() {
       for face in mesh.faces() {
+        let mut face: Face<ScreenPt> = face.as_ref().convert();
         let context = self.shader_context(camera, mesh);
         let shader = mesh.shader.as_ref();
 
-        // TODO: each vertex fragment is computed multiple times, fix it.
-        for (mut a, mut b) in face.edges() {
-          mesh.shader.vertex(&context, &mut a);
-          mesh.shader.vertex(&context, &mut b);
+        face.map_in_place(|mut p| mesh.shader.vertex(&context, &mut p));
+
+        for (a, b) in face.edges() {
           self.draw_line(a, b, &context, shader);
         }
       }
@@ -570,7 +576,7 @@ impl Rasterizer {
       let context = self.shader_context(camera, mesh);
 
       for face in mesh.faces() {
-        for trig in face.tessellate() {
+        for trig in face.triangulate() {
           let mut trig = trig.convert();
           self.shade_triangle_vertices(&mut trig, &context, shader);
           self.fill_triangle(&trig, &context, shader);
@@ -586,7 +592,7 @@ impl Rasterizer {
       let context = self.shader_context(camera, mesh);
 
       for face in mesh.faces() {
-        for trig in face.tessellate() {
+        for trig in face.triangulate() {
           let mut trig = trig.convert();
           self.shade_triangle_vertices(&mut trig, &context, shader);
           self.draw_triangle_clipped(&trig, &context, shader);

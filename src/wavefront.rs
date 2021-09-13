@@ -62,7 +62,7 @@ impl Wavefront {
   }
 
   fn parse_face(slices: &[&str]) -> anyhow::Result<Face<PolyVert>> {
-    let mut face = Face::new();
+    let mut face = Face::new(false);
     for v in slices {
       let indices: Vec<Result<usize, _>> =
         v.split("/").map(|i| usize::from_str(i)).collect();

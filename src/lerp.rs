@@ -12,7 +12,7 @@ impl Lerp for f32 {
 
 impl Lerp for i32 {
   fn lerp(&self, other: &Self, t: f32) -> Self {
-    self + ((other - self) as f32 * t).round() as Self
+    self + ((other - self) as f32 * t) as Self
   }
 }
 

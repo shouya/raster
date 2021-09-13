@@ -55,6 +55,7 @@ pub struct Tunable {
   mode: RasterizerMode,
   zbuffer_mode: bool,
   model_file: PathBuf,
+  double_faced: bool
 }
 
 impl Default for Tunable {
@@ -73,6 +74,7 @@ impl Default for Tunable {
       mode: RasterizerMode::Shaded,
       zbuffer_mode: false,
       model_file: "assets/pumpkin.obj".into(),
+      double_faced: false
     }
   }
 }
@@ -152,6 +154,11 @@ impl RasterApp {
           }
         }
       });
+
+    let t = &mut self.tunable;
+    if ui.checkbox(&mut t.double_faced, "Double-faced mesh").changed() {
+      self.redraw = true;
+    }
   }
 
   fn draw_canvas(&self, ui: &mut egui::Ui) {
@@ -284,7 +291,9 @@ fn sample_scene(tun: &Tunable) -> Scene {
   let mesh = Mesh::new_wavefront(wavefront)
     .transformed(Matrix4::new_rotation(rotation))
     .transformed(Matrix4::new_translation(&translation))
-    .shaded(shader);
+    .shaded(shader)
+    .double_faced(tun.double_faced)
+    ;
 
   scene.add_mesh(mesh);
 

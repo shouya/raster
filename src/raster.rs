@@ -3,7 +3,12 @@ use std::{cmp::max, convert::TryInto};
 use approx::abs_diff_eq;
 use nalgebra::{Matrix4, Point3, Vector2, Vector3, Vector4};
 
-use crate::{lerp::{lerp, lerp_closed_iter, Lerp}, shader::{PureColor, Shader, ShaderContext}, util::f32_cmp, wavefront::Wavefront};
+use crate::{
+  lerp::{lerp, lerp_closed_iter, Lerp},
+  shader::{PureColor, Shader, ShaderContext},
+  util::f32_cmp,
+  wavefront::Wavefront,
+};
 
 pub type Color = Vector4<f32>;
 
@@ -213,12 +218,14 @@ impl<'a, T> Trig<T> {
 #[derive(Debug, Clone)]
 pub struct Face<T> {
   vertices: Vec<T>,
+  double_faced: bool,
 }
 
 impl<T> Face<T> {
-  pub fn new() -> Self {
+  pub fn new(double_faced: bool) -> Self {
     Face {
       vertices: Vec::new(),
+      double_faced,
     }
   }
   pub fn add_vert(&mut self, v: T) {
@@ -229,9 +236,14 @@ impl<T> Face<T> {
     self.vertices.as_ref()
   }
 
+  pub fn double_faced(&self) -> bool {
+    self.double_faced
+  }
+
   pub fn as_ref(&self) -> Face<&T> {
     Face {
       vertices: self.vertices.iter().collect(),
+      double_faced: self.double_faced,
     }
   }
 
@@ -258,6 +270,7 @@ impl<T> Face<T> {
   {
     Face {
       vertices: self.vertices.into_iter().map(|x| x.into()).collect(),
+      double_faced: self.double_faced,
     }
   }
 
@@ -278,6 +291,13 @@ impl<T> Face<T> {
     F: Fn(&mut T) -> (),
   {
     self.vertices.iter_mut().for_each(f)
+  }
+}
+
+impl Face<Pt> {
+  fn avg_normal(&self) -> Vector3<f32> {
+    self.vertices.iter().map(|p| p.normal).sum::<Vector3<f32>>()
+      / self.vertices.len() as f32
   }
 }
 
@@ -340,6 +360,7 @@ pub struct Mesh {
   texture_coords: Vec<Vector2<f32>>,
   faces: Vec<Face<PolyVert>>,
   shader: Box<dyn Shader>,
+  double_faced: bool,
 }
 
 impl Mesh {
@@ -355,6 +376,7 @@ impl Mesh {
       texture_coords: Default::default(),
       faces: Vec::new(),
       shader: Box::new(shader),
+      double_faced: false,
     }
   }
 
@@ -368,6 +390,7 @@ impl Mesh {
       texture_coords: wf.texture_coords,
       faces: wf.faces,
       shader: Box::new(shader),
+      double_faced: false,
     }
   }
 
@@ -376,12 +399,17 @@ impl Mesh {
     self
   }
 
+  pub fn double_faced(mut self, double_faced: bool) -> Self {
+    self.double_faced = double_faced;
+    self
+  }
+
   pub fn faces(&self) -> impl Iterator<Item = Face<PolyVertRef<'_>>> {
     self.faces.iter().map(move |f| self.get_face(f))
   }
 
   pub fn get_face(&self, face: &Face<PolyVert>) -> Face<PolyVertRef<'_>> {
-    let mut res = Face::new();
+    let mut res = Face::new(self.double_faced);
     for vert in face.vertices() {
       let vertex = &self.vertices[vert.vertex_index];
       let texture_coords = vert.texture_index.map(|i| &self.texture_coords[i]);
@@ -560,6 +588,9 @@ impl Rasterizer {
         let shader = mesh.shader.as_ref();
 
         face.map_in_place(|mut p| mesh.shader.vertex(&context, &mut p));
+        if self.is_hidden_surface(&face) {
+          continue;
+        }
 
         for (a, b) in face.edges() {
           self.draw_line(a, b, &context, shader);
@@ -577,6 +608,9 @@ impl Rasterizer {
       for face in mesh.faces() {
         let mut face = face.as_ref().convert();
         face.map_in_place(|mut p| mesh.shader.vertex(&context, &mut p));
+        if self.is_hidden_surface(&face) {
+          continue;
+        }
 
         for trig in face.triangulate() {
           self.fill_triangle(&trig, &context, shader);
@@ -594,6 +628,9 @@ impl Rasterizer {
       for face in mesh.faces() {
         let mut face = face.as_ref().convert();
         face.map_in_place(|mut p| mesh.shader.vertex(&context, &mut p));
+        if self.is_hidden_surface(&face) {
+          continue;
+        }
 
         for trig in face.triangulate() {
           self.draw_triangle_clipped(&trig, &context, shader);
@@ -810,12 +847,18 @@ impl Rasterizer {
     }
   }
 
-  fn is_hidden_surface(&self, triangle: &Trig<Pt>) -> bool {
+  fn is_hidden_surface(&self, face: &Face<Pt>) -> bool {
+    if face.double_faced() {
+      return false;
+    }
+
     let positive_direction: Vector3<f32> = [0.0, 0.0, 1.0].into();
-    let v1 = triangle.b().point - triangle.a().point;
-    let v2 = triangle.c().point - triangle.a().point;
-    let n = v1.cross(&v2);
-    n.dot(&positive_direction) < 0.0
+    let v1 = face.vertices()[1].point - face.vertices()[0].point;
+    let v2 = face.vertices()[2].point - face.vertices()[0].point;
+    let normal = v1.cross(&v2);
+    // no need to get the real normalized normal because we don't need
+    // an exact number. The sum of the normal value is enough.
+    normal.dot(&positive_direction) < 0.0
   }
 
   // do not check for zbuffer
@@ -902,9 +945,6 @@ impl Rasterizer {
     shader: &dyn Shader,
   ) {
     for trig in self.clip_triangle(&trig) {
-      if self.is_hidden_surface(&trig) {
-        return;
-      }
       let pts: Vec<_> = trig.vertices().into();
       self.draw_line(pts[0], pts[1], &context, shader);
       self.draw_line(pts[1], pts[2], &context, shader);
@@ -918,9 +958,6 @@ impl Rasterizer {
     context: &ShaderContext,
     shader: &dyn Shader,
   ) {
-    if self.is_hidden_surface(trig) {
-      return;
-    }
     for trig in self.clip_triangle(&trig) {
       let mut pts: Vec<_> = trig.vertices().into();
 

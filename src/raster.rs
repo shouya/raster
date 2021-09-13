@@ -3,12 +3,7 @@ use std::{cmp::max, convert::TryInto};
 use approx::abs_diff_eq;
 use nalgebra::{Matrix4, Point3, Vector2, Vector3, Vector4};
 
-use crate::{
-  lerp::{lerp, lerp_closed_iter, Lerp},
-  shader::{DiffuseShader, Shader, ShaderContext},
-  util::f32_cmp,
-  wavefront::Wavefront,
-};
+use crate::{lerp::{lerp, lerp_closed_iter, Lerp}, shader::{DiffuseShader, PureColor, Shader, ShaderContext}, util::f32_cmp, wavefront::Wavefront};
 
 pub type Color = Vector4<f32>;
 
@@ -335,11 +330,7 @@ impl Mesh {
   #[allow(unused)]
   pub fn new() -> Self {
     // let shader = PureColor::new(COLOR::rgba(1.0, 0.0, 0.0, 0.0));
-    let shader = DiffuseShader::new(
-      COLOR::rgba(1.0, 0.0, 0.0, 0.0),
-      COLOR::rgba(1.0, 1.0, 1.0, 1.0),
-      Point3::new(-5.0, 10.0, 0.0),
-    );
+    let shader = PureColor::new(COLOR::rgb(1.0, 0.5, 0.0));
 
     Self {
       transform: Matrix4::identity(),
@@ -352,11 +343,7 @@ impl Mesh {
   }
 
   pub fn new_wavefront(wf: Wavefront) -> Self {
-    let shader = DiffuseShader::new(
-      COLOR::rgba(1.0, 0.0, 0.0, 0.0),
-      COLOR::rgba(1.0, 1.0, 1.0, 1.0),
-      Point3::new(-5.0, 10.0, 0.0),
-    );
+    let shader = PureColor::new(COLOR::rgb(1.0, 0.5, 0.0));
 
     Self {
       transform: Matrix4::identity(),
@@ -366,6 +353,11 @@ impl Mesh {
       faces: wf.faces,
       shader: Box::new(shader),
     }
+  }
+
+  pub fn shaded(mut self, shader: impl Shader + 'static) -> Self {
+    self.shader = Box::new(shader);
+    self
   }
 
   pub fn faces(&self) -> impl Iterator<Item = Face<PolyVertRef<'_>>> {

@@ -6,8 +6,9 @@ use eframe::{
   epi::{self, TextureAllocator},
   NativeOptions,
 };
-use nalgebra::{Matrix4, Vector3};
-use raster::{Camera, Color, Mesh, Rasterizer, RasterizerMode, Scene};
+use nalgebra::{Matrix4, Point2, Point3, Vector3};
+use raster::{Camera, Color, Mesh, Rasterizer, RasterizerMode, Scene, COLOR};
+use shader::SpecularShader;
 use wavefront::Wavefront;
 
 mod lerp;
@@ -278,12 +279,14 @@ fn sample_scene(tun: &Tunable) -> Scene {
   let translation = Vector3::new(tun.trans_x, tun.trans_y, tun.trans_z);
 
   let wavefront = Wavefront::from_file(&tun.model_file).unwrap();
+  let shader =
+    SpecularShader::new(COLOR::rgb(1.0, 0.5, 0.0), Point3::new(5.0, 10.0, 5.0));
+  let mesh = Mesh::new_wavefront(wavefront)
+    .transformed(Matrix4::new_rotation(rotation))
+    .transformed(Matrix4::new_translation(&translation))
+    .shaded(shader);
 
-  scene.add_mesh(
-    Mesh::new_wavefront(wavefront)
-      .transformed(Matrix4::new_rotation(rotation))
-      .transformed(Matrix4::new_translation(&translation)),
-  );
+  scene.add_mesh(mesh);
 
   // scene.add_mesh(Mesh::new_quad([
   //   Point3::new(-1.0, -1.0, -1.0),

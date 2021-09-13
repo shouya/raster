@@ -7,7 +7,10 @@ use eframe::{
   NativeOptions,
 };
 use nalgebra::{Matrix4, Point3, Vector3};
-use raster::{Camera, Color, Mesh, Rasterizer, RasterizerMode, Scene, COLOR};
+use raster::{
+  Camera, Color, Mesh, Rasterizer, RasterizerMetric, RasterizerMode, Scene,
+  COLOR,
+};
 use shader::SpecularShader;
 use wavefront::Wavefront;
 
@@ -19,10 +22,16 @@ mod wavefront;
 
 use crate::raster::Image;
 
+pub struct RenderResult {
+  pub image: Image<Color>,
+  pub zbuf_image: Image<Color>,
+  pub metric: RasterizerMetric,
+}
+
 struct RasterApp {
   texture_size: (usize, usize),
   texture_handle: Option<egui::TextureId>,
-  image: Option<Image<Color>>,
+  render_result: Option<RenderResult>,
   redraw: bool,
   models: Vec<PathBuf>,
   tunable: Tunable,
@@ -33,7 +42,7 @@ impl Default for RasterApp {
     Self {
       texture_size: (600, 400),
       texture_handle: None,
-      image: None,
+      render_result: None,
       redraw: true,
       tunable: Tunable::default(),
       models: vec![],
@@ -55,7 +64,7 @@ pub struct Tunable {
   mode: RasterizerMode,
   zbuffer_mode: bool,
   model_file: PathBuf,
-  double_faced: bool
+  double_faced: bool,
 }
 
 impl Default for Tunable {
@@ -74,7 +83,7 @@ impl Default for Tunable {
       mode: RasterizerMode::Shaded,
       zbuffer_mode: false,
       model_file: "assets/pumpkin.obj".into(),
-      double_faced: false
+      double_faced: false,
     }
   }
 }
@@ -156,7 +165,10 @@ impl RasterApp {
       });
 
     let t = &mut self.tunable;
-    if ui.checkbox(&mut t.double_faced, "Double-faced mesh").changed() {
+    if ui
+      .checkbox(&mut t.double_faced, "Double-faced mesh")
+      .changed()
+    {
       self.redraw = true;
     }
   }
@@ -165,14 +177,19 @@ impl RasterApp {
     let size = (self.texture_size.0 as f32, self.texture_size.1 as f32);
     if let Some(texture_id) = self.texture_handle {
       let resp = ui.image(texture_id, size);
+      ui.label(format!("{:?}", self.render_result.as_ref().unwrap().metric));
+
       let topleft = resp.rect.min;
       if let Some(mut pos) = resp.hover_pos() {
         pos -= topleft.to_vec2();
         resp.on_hover_ui_at_pointer(|ui| {
           let coords = (pos.x as i32, pos.y as i32);
           ui.label(format!("{},{}", coords.0, coords.1));
-          if let Some(color) = self.image.as_ref().unwrap().pixel(coords) {
+          if let Some(color) = self.render_result.as_ref().unwrap().image.pixel(coords) {
             ui.label(format!("{:.2},{:.2},{:.2}", color.x, color.y, color.z));
+          }
+          if let Some(color) = self.render_result.as_ref().unwrap().zbuf_image.pixel(coords) {
+            ui.label(format!("depth: {:.2}", color.x));
           }
         });
       }
@@ -184,12 +201,12 @@ impl RasterApp {
       return;
     }
 
-    let image = {
+    let result = {
       let scene = sample_scene(&self.tunable);
       render_scene(&self.tunable, self.texture_size, &scene)
     };
 
-    let texture_data = convert_texture(&image);
+    let texture_data = convert_texture(&result.image);
     if let Some(texture_id) = self.texture_handle {
       tex_alloc.free(texture_id);
     }
@@ -197,7 +214,7 @@ impl RasterApp {
       .alloc_srgba_premultiplied(self.texture_size, texture_data.as_slice());
 
     self.texture_handle = Some(texture_id);
-    self.image = Some(image);
+    self.render_result = Some(result);
     self.redraw = false;
   }
 
@@ -255,15 +272,15 @@ fn render_scene(
   tun: &Tunable,
   size: (usize, usize),
   scene: &Scene,
-) -> Image<Color> {
+) -> RenderResult {
   let mut raster = Rasterizer::new(size);
   raster.set_mode(tun.mode);
   raster.rasterize(&scene);
 
-  if tun.zbuffer_mode {
-    raster.zbuffer_image()
-  } else {
-    raster.into_image()
+  RenderResult {
+    metric: raster.metric(),
+    zbuf_image: raster.zbuffer_image(),
+    image: raster.into_image(),
   }
 }
 
@@ -292,8 +309,7 @@ fn sample_scene(tun: &Tunable) -> Scene {
     .transformed(Matrix4::new_rotation(rotation))
     .transformed(Matrix4::new_translation(&translation))
     .shaded(shader)
-    .double_faced(tun.double_faced)
-    ;
+    .double_faced(tun.double_faced);
 
   scene.add_mesh(mesh);
 

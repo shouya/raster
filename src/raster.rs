@@ -247,6 +247,10 @@ impl<T> Face<T> {
     }
   }
 
+  pub fn len(&self) -> usize {
+    self.vertices.len()
+  }
+
   pub fn triangulate(&self) -> impl Iterator<Item = Trig<T>>
   where
     T: Copy,
@@ -545,11 +549,26 @@ impl Lerp for Pt {
   }
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct RasterizerMetric {
+  pub faces_rendered: usize,
+  pub triangles_rendered: usize,
+  pub clipped_triangles_rendered: usize,
+  pub sub_triangles_rendered: usize,
+  pub hidden_face_removed: usize,
+  pub lines_drawn: usize,
+  pub horizontal_lines_drawn: usize,
+  pub vertices_shaded: usize,
+  pub pixels_shaded: usize,
+  pub pixels_discarded: usize,
+}
+
 pub struct Rasterizer {
   size: (f32, f32),
   mode: RasterizerMode,
   image: Image<Color>,
   zbuffer: Image<f32>,
+  metric: RasterizerMetric,
 }
 
 impl Rasterizer {
@@ -558,12 +577,14 @@ impl Rasterizer {
     let zbuffer = Image::new_filled(size, &1.0);
     let mode = RasterizerMode::Shaded;
     let size = (image.width() as f32, image.height() as f32);
+    let metric = Default::default();
 
     Self {
       size,
       image,
       zbuffer,
       mode,
+      metric,
     }
   }
 
@@ -572,14 +593,6 @@ impl Rasterizer {
   }
 
   pub fn rasterize(&mut self, scene: &Scene) {
-    match self.mode {
-      RasterizerMode::Shaded => self.rasterize_shaded(scene),
-      RasterizerMode::Clipped => self.rasterize_clipping(scene),
-      RasterizerMode::Wireframe => self.rasterize_wireframe(scene),
-    }
-  }
-
-  pub fn rasterize_wireframe(&mut self, scene: &Scene) {
     let camera = scene.camera();
     for mesh in scene.iter_meshes() {
       for face in mesh.faces() {
@@ -588,52 +601,41 @@ impl Rasterizer {
         let shader = mesh.shader.as_ref();
 
         face.map_in_place(|mut p| mesh.shader.vertex(&context, &mut p));
+        self.metric.vertices_shaded += face.len();
+
         if self.is_hidden_surface(&face) {
+          self.metric.hidden_face_removed += 1;
           continue;
         }
 
-        for (a, b) in face.edges() {
-          self.draw_line(a, b, &context, shader);
-        }
+        self.metric.faces_rendered += 1;
+        self.rasterize_face(&mut face, &context, shader);
       }
     }
   }
 
-  pub fn rasterize_shaded(&mut self, scene: &Scene) {
-    let camera = scene.camera();
-    for mesh in scene.iter_meshes() {
-      let shader = mesh.shader.as_ref();
-      let context = self.shader_context(camera, mesh);
+  pub fn rasterize_face(
+    &mut self,
+    face: &mut Face<Pt>,
+    context: &ShaderContext,
+    shader: &dyn Shader,
+  ) {
+    use RasterizerMode::*;
 
-      for face in mesh.faces() {
-        let mut face = face.as_ref().convert();
-        face.map_in_place(|mut p| mesh.shader.vertex(&context, &mut p));
-        if self.is_hidden_surface(&face) {
-          continue;
-        }
-
+    match self.mode {
+      Shaded => {
         for trig in face.triangulate() {
           self.fill_triangle(&trig, &context, shader);
         }
       }
-    }
-  }
-
-  pub fn rasterize_clipping(&mut self, scene: &Scene) {
-    let camera = scene.camera();
-    for mesh in scene.iter_meshes() {
-      let shader = mesh.shader.as_ref();
-      let context = self.shader_context(camera, mesh);
-
-      for face in mesh.faces() {
-        let mut face = face.as_ref().convert();
-        face.map_in_place(|mut p| mesh.shader.vertex(&context, &mut p));
-        if self.is_hidden_surface(&face) {
-          continue;
-        }
-
+      Clipped => {
         for trig in face.triangulate() {
           self.draw_triangle_clipped(&trig, &context, shader);
+        }
+      }
+      Wireframe => {
+        for (a, b) in face.edges() {
+          self.draw_line(a, b, &context, shader);
         }
       }
     }
@@ -819,6 +821,10 @@ impl Rasterizer {
     self.zbuffer.clone().map(to_color)
   }
 
+  pub fn metric(&self) -> RasterizerMetric {
+    self.metric.clone()
+  }
+
   pub fn into_image(self) -> Image<Color> {
     self.image
   }
@@ -826,6 +832,7 @@ impl Rasterizer {
   pub fn size_f32(&self) -> (f32, f32) {
     self.size
   }
+
 
   // checks the zbuffer
   fn draw_pixel(
@@ -838,8 +845,12 @@ impl Rasterizer {
 
     match self.zbuffer.pixel(coords) {
       None => return,
-      Some(d) if p.depth() > *d => return,
+      Some(d) if p.depth() > *d => {
+        self.metric.pixels_discarded += 1;
+        return;
+      }
       Some(_) => {
+        self.metric.pixels_shaded += 1;
         shader.fragment(context, &mut p);
         self.put_pixel(coords, p.color);
         self.zbuffer.put_pixel(coords, p.depth());
@@ -880,6 +891,8 @@ impl Rasterizer {
       return;
     }
 
+    self.metric.lines_drawn += 1;
+
     let (p1x, p1y) = self.to_coords(&p1);
     let (p2x, p2y) = self.to_coords(&p2);
     let dx = p2x - p1x;
@@ -899,6 +912,8 @@ impl Rasterizer {
     context: &ShaderContext,
     shader: &dyn Shader,
   ) {
+    self.metric.sub_triangles_rendered += 1;
+
     let top_y = self.to_y_coord(top.y());
     let bottom_y = self.to_y_coord(bottom_left.y());
     let h = (top_y - bottom_y).abs() as usize;
@@ -919,6 +934,8 @@ impl Rasterizer {
     context: &ShaderContext,
     shader: &dyn Shader,
   ) {
+    self.metric.sub_triangles_rendered += 1;
+
     let top_y = self.to_y_coord(top_left.y());
     let bottom_y = self.to_y_coord(bottom.y());
     let h = (top_y - bottom_y).abs() as usize;
@@ -958,7 +975,9 @@ impl Rasterizer {
     context: &ShaderContext,
     shader: &dyn Shader,
   ) {
+    self.metric.triangles_rendered += 1;
     for trig in self.clip_triangle(&trig) {
+      self.metric.clipped_triangles_rendered += 1;
       let mut pts: Vec<_> = trig.vertices().into();
 
       let [upper, lower] = Self::horizontally_split_triangle(
@@ -966,16 +985,10 @@ impl Rasterizer {
       );
 
       if let Some([a, b, c]) = upper {
-        self.draw_line(a, b, &context, shader);
-        self.draw_line(b, c, &context, shader);
-        self.draw_line(c, a, &context, shader);
         self.fill_upper_triangle(a, b, c, &context, shader);
       }
 
       if let Some([a, b, c]) = lower {
-        self.draw_line(a, b, &context, shader);
-        self.draw_line(b, c, &context, shader);
-        self.draw_line(c, a, &context, shader);
         self.fill_lower_triangle(a, b, c, &context, shader);
       }
     }
@@ -1021,6 +1034,7 @@ impl Rasterizer {
     context: &ShaderContext,
     shader: &dyn Shader,
   ) {
+    self.metric.horizontal_lines_drawn += 1;
     let x1 = self.to_x_coord(p1.x());
     let x2 = self.to_x_coord(p2.x());
     let w = (x1 - x2).abs() as usize;

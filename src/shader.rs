@@ -46,6 +46,7 @@ pub struct DiffuseShader {
 }
 
 impl DiffuseShader {
+  #[allow(unused)]
   pub fn new(color: Color, light_pos: Point3<f32>) -> Self {
     let light = COLOR::rgb(1.0, 1.0, 1.0);
 

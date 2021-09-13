@@ -3,7 +3,7 @@ use std::{cmp::max, convert::TryInto};
 use approx::abs_diff_eq;
 use nalgebra::{Matrix4, Point3, Vector2, Vector3, Vector4};
 
-use crate::{lerp::{lerp, lerp_closed_iter, Lerp}, shader::{DiffuseShader, PureColor, Shader, ShaderContext}, util::f32_cmp, wavefront::Wavefront};
+use crate::{lerp::{lerp, lerp_closed_iter, Lerp}, shader::{PureColor, Shader, ShaderContext}, util::f32_cmp, wavefront::Wavefront};
 
 pub type Color = Vector4<f32>;
 
@@ -34,6 +34,22 @@ impl<T> Image<T> {
     let mut buffer = Vec::with_capacity(len);
     for _ in 0..len {
       buffer.push(Default::default());
+    }
+
+    Self {
+      dimension: size,
+      pixels: buffer,
+    }
+  }
+
+  pub fn new_filled(size: (usize, usize), val: &T) -> Self
+  where
+    T: Clone,
+  {
+    let len = size.0 * size.1;
+    let mut buffer = Vec::with_capacity(len);
+    for _ in 0..len {
+      buffer.push(val.clone());
     }
 
     Self {
@@ -511,7 +527,7 @@ pub struct Rasterizer {
 impl Rasterizer {
   pub fn new(size: (usize, usize)) -> Self {
     let image = Image::new(size);
-    let zbuffer = Image::new(size);
+    let zbuffer = Image::new_filled(size, &1.0);
     let mode = RasterizerMode::Shaded;
     let size = (image.width() as f32, image.height() as f32);
 

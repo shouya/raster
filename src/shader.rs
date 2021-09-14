@@ -96,17 +96,16 @@ impl Shader for SpecularShader {
     let light_angle = (self.light_pos - pt.orig_point).normalize();
     let camera_angle = -context.camera.transform_point(&Point3::origin());
     let light_refl_angle = reflect(&light_angle, &normal).normalize();
-    let ambient = self.color * 0.2;
+    let ambient = self.color * 0.1;
     let mut color = Vector4::zeros();
 
     let light_intensity = f32::max(light_angle.dot(&normal), 0.0);
     color += self.light.component_mul(&self.color) * light_intensity;
 
-    let phong_intensity = f32::powf(
-      light_refl_angle.dot(&camera_angle.coords.normalize()),
-      self.shininess,
-    );
-    color += phong_intensity * self.light;
+    let phong_intensity =
+      f32::max(light_refl_angle.dot(&camera_angle.coords.normalize()), 0.0);
+
+    color += f32::powf(phong_intensity, self.shininess) * self.light;
 
     color += ambient;
 

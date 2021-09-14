@@ -15,11 +15,3 @@ pub fn f32_cmp(a: &f32, b: &f32) -> cmp::Ordering {
 pub fn reflect(l: &Vector3<f32>, n: &Vector3<f32>) -> Vector3<f32> {
   -2.0 * n.dot(&l) * n + l
 }
-
-pub fn avg3(
-  a: &Vector3<f32>,
-  b: &Vector3<f32>,
-  c: &Vector3<f32>,
-) -> Vector3<f32> {
-  a + b + c / 3.0
-}

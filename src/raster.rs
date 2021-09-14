@@ -298,21 +298,14 @@ impl<T> Face<T> {
   }
 }
 
-impl Face<Pt> {
-  fn avg_normal(&self) -> Vector3<f32> {
-    self.vertices.iter().map(|p| p.normal).sum::<Vector3<f32>>()
-      / self.vertices.len() as f32
-  }
-}
-
 #[derive(Debug, Clone)]
-pub struct PolyVert {
+pub struct IndexedPolyVert {
   vertex_index: usize,
   texture_index: Option<usize>,
   normal_index: Option<usize>,
 }
 
-impl PolyVert {
+impl IndexedPolyVert {
   pub fn new(vertex_index: usize) -> Self {
     Self {
       vertex_index,
@@ -351,7 +344,7 @@ impl PolyVert {
 }
 
 #[derive(Debug, Clone)]
-pub struct PolyVertRef<'a> {
+pub struct PolyVert<'a> {
   pub vertex: &'a Point3<f32>,
   pub texture_coords: Option<&'a Vector2<f32>>,
   pub normal: Option<&'a Vector3<f32>>,
@@ -362,7 +355,7 @@ pub struct Mesh {
   vertices: Vec<Point3<f32>>,
   vertex_normals: Vec<Vector3<f32>>,
   texture_coords: Vec<Vector2<f32>>,
-  faces: Vec<Face<PolyVert>>,
+  faces: Vec<Face<IndexedPolyVert>>,
   shader: Box<dyn Shader>,
   double_faced: bool,
 }
@@ -408,18 +401,18 @@ impl Mesh {
     self
   }
 
-  pub fn faces(&self) -> impl Iterator<Item = Face<PolyVertRef<'_>>> {
+  pub fn faces(&self) -> impl Iterator<Item = Face<PolyVert<'_>>> {
     self.faces.iter().map(move |f| self.get_face(f))
   }
 
-  pub fn get_face(&self, face: &Face<PolyVert>) -> Face<PolyVertRef<'_>> {
+  pub fn get_face(&self, face: &Face<IndexedPolyVert>) -> Face<PolyVert<'_>> {
     let mut res = Face::new(self.double_faced);
     for vert in face.vertices() {
       let vertex = &self.vertices[vert.vertex_index];
       let texture_coords = vert.texture_index.map(|i| &self.texture_coords[i]);
       let normal = vert.normal_index.map(|i| &self.vertex_normals[i]);
 
-      res.add_vert(PolyVertRef {
+      res.add_vert(PolyVert {
         vertex,
         texture_coords,
         normal,
@@ -485,8 +478,8 @@ pub struct Pt {
   pub buf_v3: Option<Vector3<f32>>,
 }
 
-impl<'a> From<&PolyVertRef<'a>> for Pt {
-  fn from(v: &PolyVertRef<'a>) -> Self {
+impl<'a> From<&PolyVert<'a>> for Pt {
+  fn from(v: &PolyVert<'a>) -> Self {
     let mut pt = Self::new(*v.vertex);
     if let Some(uv) = v.texture_coords {
       pt.set_uv(*uv);

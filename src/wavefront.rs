@@ -3,13 +3,13 @@ use std::{fs::File, io::Read, path::Path, str::FromStr};
 use anyhow;
 use nalgebra::{Point3, Vector2, Vector3};
 
-use crate::raster::{Face, PolyVert};
+use crate::raster::{Face, IndexedPolyVert};
 
 pub struct Wavefront {
   pub vertices: Vec<Point3<f32>>,
   pub vertex_normals: Vec<Vector3<f32>>,
   pub texture_coords: Vec<Vector2<f32>>,
-  pub faces: Vec<Face<PolyVert>>,
+  pub faces: Vec<Face<IndexedPolyVert>>,
 }
 
 impl Wavefront {
@@ -61,22 +61,22 @@ impl Wavefront {
       .map_err(anyhow::Error::from)
   }
 
-  fn parse_face(slices: &[&str]) -> anyhow::Result<Face<PolyVert>> {
+  fn parse_face(slices: &[&str]) -> anyhow::Result<Face<IndexedPolyVert>> {
     let mut face = Face::new(false);
     for v in slices {
       let indices: Vec<Result<usize, _>> =
         v.split("/").map(|i| usize::from_str(i)).collect();
 
       match indices.as_slice() {
-        [Ok(vi)] => face.add_vert(PolyVert::new(vi - 1)),
+        [Ok(vi)] => face.add_vert(IndexedPolyVert::new(vi - 1)),
         [Ok(vi), Ok(ti)] => {
-          face.add_vert(PolyVert::new_texture(vi - 1, ti - 1))
+          face.add_vert(IndexedPolyVert::new_texture(vi - 1, ti - 1))
         }
         [Ok(vi), Ok(ti), Ok(ni)] => {
-          face.add_vert(PolyVert::new_texture_normal(vi - 1, ti - 1, ni - 1))
+          face.add_vert(IndexedPolyVert::new_texture_normal(vi - 1, ti - 1, ni - 1))
         }
         [Ok(vi), Err(_), Ok(ni)] => {
-          face.add_vert(PolyVert::new_normal(vi - 1, ni - 1))
+          face.add_vert(IndexedPolyVert::new_normal(vi - 1, ni - 1))
         }
         _ => anyhow::bail!("Invalid face: {:?}", indices),
       }

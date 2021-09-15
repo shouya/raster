@@ -212,6 +212,12 @@ impl RasterApp {
         }
       }
 
+      let scroll_y = resp.ctx.input().scroll_delta.y;
+      if scroll_y != 0.0 {
+        self.tunable.trans_z += scroll_y * TRANSLATION_SPEED;
+        self.redraw = true;
+      }
+
       let topleft = resp.rect.min;
       if let Some(mut pos) = resp.hover_pos() {
         pos -= topleft.to_vec2();

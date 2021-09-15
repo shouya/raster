@@ -255,7 +255,7 @@ impl<T> Face<T> {
   where
     T: Copy,
   {
-    assert!(self.vertices.len() >= 3);
+    debug_assert!(self.vertices.len() >= 3);
 
     let mut res = Vec::new();
 
@@ -825,7 +825,6 @@ impl Rasterizer {
   pub fn size_f32(&self) -> (f32, f32) {
     self.size
   }
-
 
   // checks the zbuffer
   fn draw_pixel(

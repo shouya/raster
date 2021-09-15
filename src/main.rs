@@ -6,7 +6,7 @@ use eframe::{
   epi::{self, TextureAllocator},
   NativeOptions,
 };
-use nalgebra::{Matrix4, Point3, Vector3};
+use nalgebra::{Matrix4, Point3, Rotation, Vector3};
 use raster::{
   Camera, Color, Mesh, Rasterizer, RasterizerMetric, RasterizerMode, Scene,
   COLOR,
@@ -74,15 +74,15 @@ impl Default for Tunable {
       fov: 100.0,
       znear: 1.0,
       zfar: 1000.0,
-      rot_x: 1.2,
-      rot_y: 0.3,
+      rot_x: 0.0,
+      rot_y: 0.0,
       rot_z: 0.0,
       trans_x: 0.0,
       trans_y: 0.0,
       trans_z: 3.0,
       mode: RasterizerMode::Shaded,
       zbuffer_mode: false,
-      model_file: "assets/pumpkin.obj".into(),
+      model_file: "assets/pumpkin_nosubdiv.obj".into(),
       double_faced: false,
     }
   }
@@ -109,7 +109,7 @@ impl RasterApp {
       (&mut t.znear, -100.0, 100.0, "Z near"),
       (&mut t.zfar, -100.0, 100.0, "Z far"),
       (&mut t.rot_x, -2.0 * PI, 2.0 * PI, "Rotation (X)"),
-      (&mut t.rot_y, -2.0 * PI, 2.0 * PI, "Rotation (Y)"),
+      (&mut t.rot_y, -2.0 * PI, 2.0 * PI, "Rotation (X)"),
       (&mut t.rot_z, -2.0 * PI, 2.0 * PI, "Rotation (Z)"),
       (&mut t.trans_x, -5.0, 5.0, "Translation (X)"),
       (&mut t.trans_y, -5.0, 5.0, "Translation (Y)"),
@@ -173,11 +173,44 @@ impl RasterApp {
     }
   }
 
-  fn draw_canvas(&self, ui: &mut egui::Ui) {
+  fn draw_canvas(&mut self, ui: &mut egui::Ui) {
     let size = (self.texture_size.0 as f32, self.texture_size.1 as f32);
     if let Some(texture_id) = self.texture_handle {
-      let resp = ui.image(texture_id, size);
+      let image = egui::Image::new(texture_id, size).sense(egui::Sense {
+        click: true,
+        drag: true,
+        focusable: true,
+      });
+      let resp = ui.add(image);
       ui.label(format!("{:?}", self.render_result.as_ref().unwrap().metric));
+
+      use egui::PointerButton::*;
+      let d = resp.drag_delta();
+
+      const ROTATION_SPEED: f32 = 1.5;
+      const TRANSLATION_SPEED: f32 = 0.01;
+
+      if resp.dragged() {
+        if resp.dragged_by(Primary) {
+          let t = &self.tunable;
+          let rot_delta = Rotation::from_euler_angles(
+            d.y / size.1 * ROTATION_SPEED,
+            d.x / size.0 * ROTATION_SPEED,
+            0.0,
+          );
+          let rot_old = Rotation::from_euler_angles(t.rot_x, t.rot_y, t.rot_z);
+          let rot_new = (rot_delta * rot_old).euler_angles();
+          self.tunable.rot_x = rot_new.0;
+          self.tunable.rot_y = rot_new.1;
+          self.tunable.rot_z = rot_new.2;
+          self.redraw = true;
+        }
+        if resp.dragged_by(Middle) {
+          self.tunable.trans_x += d.x * TRANSLATION_SPEED;
+          self.tunable.trans_y -= d.y * TRANSLATION_SPEED;
+          self.redraw = true;
+        }
+      }
 
       let topleft = resp.rect.min;
       if let Some(mut pos) = resp.hover_pos() {
@@ -185,10 +218,18 @@ impl RasterApp {
         resp.on_hover_ui_at_pointer(|ui| {
           let coords = (pos.x as i32, pos.y as i32);
           ui.label(format!("{},{}", coords.0, coords.1));
-          if let Some(color) = self.render_result.as_ref().unwrap().image.pixel(coords) {
+          if let Some(color) =
+            self.render_result.as_ref().unwrap().image.pixel(coords)
+          {
             ui.label(format!("{:.2},{:.2},{:.2}", color.x, color.y, color.z));
           }
-          if let Some(color) = self.render_result.as_ref().unwrap().zbuf_image.pixel(coords) {
+          if let Some(color) = self
+            .render_result
+            .as_ref()
+            .unwrap()
+            .zbuf_image
+            .pixel(coords)
+          {
             ui.label(format!("depth: {:.2}", color.x));
           }
         });
@@ -298,15 +339,21 @@ fn sample_scene(tun: &Tunable) -> Scene {
     Matrix4::new_translation(&Vector3::new(0.0, 0.0, tun.distance));
   camera.transformd(&cam_trans);
 
+  // let rotation = camera
+  //   .matrix()
+  //   .pseudo_inverse(0.001)
+  //   .unwrap()
+  //   .transform_vector(&Vector3::new(tun.rot_horizontal, tun.rot_vertical, 0.0));
   let mut scene = Scene::new(camera);
-  let rotation = Vector3::new(tun.rot_x, tun.rot_y, tun.rot_z);
+
   let translation = Vector3::new(tun.trans_x, tun.trans_y, tun.trans_z);
+  let rotation = Rotation::from_euler_angles(tun.rot_x, tun.rot_y, tun.rot_z);
 
   let wavefront = Wavefront::from_file(&tun.model_file).unwrap();
   let shader =
     SpecularShader::new(COLOR::rgb(1.0, 0.5, 0.0), Point3::new(5.0, 10.0, 5.0));
   let mesh = Mesh::new_wavefront(wavefront)
-    .transformed(Matrix4::new_rotation(rotation))
+    .transformed(rotation.to_homogeneous())
     .transformed(Matrix4::new_translation(&translation))
     .shaded(shader)
     .double_faced(tun.double_faced);

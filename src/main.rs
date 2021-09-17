@@ -102,7 +102,7 @@ impl Default for Tunable {
     Self {
       distance: 5.0,
       fov: 100.0,
-      znear: 1.0,
+      znear: 0.1,
       zfar: 1000.0,
       rot_x: 0.0,
       rot_y: 0.0,
@@ -283,10 +283,16 @@ impl RasterApp {
       render_scene(&self.tunable, self.texture_size, &scene)
     };
 
-    let texture_data = convert_texture(&result.image);
     if let Some(texture_id) = self.texture_handle {
       tex_alloc.free(texture_id);
     }
+
+    let texture_data = if self.tunable.zbuffer_mode {
+      convert_texture(&result.zbuf_image)
+    } else {
+      convert_texture(&result.image)
+    };
+
     let texture_id = tex_alloc
       .alloc_srgba_premultiplied(self.texture_size, texture_data.as_slice());
 
@@ -371,8 +377,7 @@ fn sample_scene<'a>(tun: &'a Tunable, cache: &'a mut SceneCache) -> Scene<'a> {
   };
 
   let mut camera = Camera::new_perspective(16.0 / 9.0, fov, tun.znear, zfar);
-  let cam_trans =
-    Matrix4::new_translation(&Vector3::new(0.0, 0.0, tun.distance));
+  let cam_trans = Translation3::new(0.0, 0.0, tun.distance).to_homogeneous();
   camera.transformd(&cam_trans);
 
   // let rotation = camera

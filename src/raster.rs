@@ -580,7 +580,7 @@ pub struct Rasterizer {
 impl Rasterizer {
   pub fn new(size: (usize, usize)) -> Self {
     let image = Image::new(size);
-    let zbuffer = Image::new_filled(size, &1.0);
+    let zbuffer = Image::new_filled(size, &1.01);
     let mode = RasterizerMode::Shaded;
     let size = (image.width() as f32, image.height() as f32);
     let metric = Default::default();

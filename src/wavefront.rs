@@ -127,8 +127,8 @@ impl Obj {
         ["usemtl", m] => {
           // TODO: change to a less clumsy way
           if curr_mesh.num_faces() > 1 {
-            obj.objs.push(curr_mesh);
-            curr_mesh = Mesh::new();
+            obj.objs.push(curr_mesh.clone());
+            curr_mesh.faces = vec![];
           }
           // it's okay that the material is not found
           if let Ok(mat) = obj.mtl.get(m) {

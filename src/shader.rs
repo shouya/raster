@@ -187,14 +187,18 @@ impl Shader for SimpleMaterial {
       let specular_sharpness = light_refl_angle
         .dot(&camera_angle.coords.normalize())
         .max(0.0);
-      let specular_intensity =
-        f32::powf(specular_sharpness, self.specular_highlight);
+      let specular_intensity = if self.specular_highlight > 1.0 {
+        f32::powf(specular_sharpness, self.specular_highlight)
+      } else {
+        0.0
+      };
+
       let specular_color = light.color().component_mul(&self.specular_color);
 
       color += specular_color * specular_intensity;
     }
 
-    color += self.ambient_color;
+    color += self.ambient_color * 0.1;
 
     pt.color = color;
   }
@@ -205,7 +209,7 @@ impl SimpleMaterial {
     lazy_static! {
       static ref PLASTER: SimpleMaterial = SimpleMaterial {
         name: String::from("plaster"),
-        specular_highlight: 0.0,
+        specular_highlight: 4.0,
         specular_color: COLOR::rgb(1.0, 1.0, 1.0),
         ambient_color: COLOR::rgb(0.3, 0.3, 0.3),
         diffuse_color: COLOR::rgb(1.0, 1.0, 1.0),

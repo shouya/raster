@@ -353,6 +353,7 @@ pub struct PolyVert<'a> {
   pub normal: Option<&'a Vector3<f32>>,
 }
 
+#[derive(Debug, Clone)]
 pub struct Mesh {
   pub material: Option<SimpleMaterial>,
   pub transform: Matrix4<f32>,

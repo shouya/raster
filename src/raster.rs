@@ -1,11 +1,11 @@
-use std::{cmp::max, convert::TryInto};
+use std::{borrow::Cow, cmp::max, convert::TryInto};
 
 use approx::abs_diff_eq;
 use nalgebra::{Matrix4, Point3, Vector2, Vector3, Vector4};
 
 use crate::{
   lerp::{lerp, lerp_closed_iter, Lerp},
-  shader::{Light, Shader, ShaderContext, SimpleMaterial},
+  shader::{Light, Shader, ShaderContext, SimpleMaterial, TextureStash},
   util::f32_cmp,
 };
 
@@ -413,23 +413,32 @@ impl Mesh {
   }
 
   pub fn shader(&self) -> &dyn Shader {
-    self.material.as_ref().unwrap_or_else(|| SimpleMaterial::plaster())
+    self
+      .material
+      .as_ref()
+      .unwrap_or_else(|| SimpleMaterial::plaster())
   }
 }
 
-pub struct Scene {
+pub struct Scene<'a> {
+  textures: Cow<'a, TextureStash>,
   camera: Camera,
   lights: Vec<Light>,
   meshes: Vec<Mesh>,
 }
 
-impl Scene {
+impl<'a> Scene<'a> {
   pub fn new(camera: Camera) -> Self {
     Self {
       camera,
+      textures: Cow::Owned(TextureStash::new()),
       lights: vec![],
       meshes: vec![],
     }
+  }
+
+  pub fn set_texture_stash(&mut self, textures: &'a TextureStash) {
+    self.textures = Cow::Borrowed(textures);
   }
 
   pub fn add_light(&mut self, light: Light) {
@@ -438,6 +447,10 @@ impl Scene {
 
   pub fn add_mesh(&mut self, mesh: Mesh) {
     self.meshes.push(mesh);
+  }
+
+  pub fn add_meshes(&mut self, mesh: &[Mesh]) {
+    self.meshes.extend_from_slice(mesh);
   }
 
   pub fn iter_meshes(&self) -> impl Iterator<Item = &Mesh> + '_ {

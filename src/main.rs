@@ -1,4 +1,9 @@
-use std::{f32::consts::PI, fs::read_dir, path::PathBuf};
+use std::{
+  collections::HashMap,
+  f32::consts::PI,
+  fs::read_dir,
+  path::{Path, PathBuf},
+};
 
 use eframe::{
   self,
@@ -8,9 +13,11 @@ use eframe::{
 };
 use nalgebra::{Matrix4, Point3, Rotation, Translation3, Vector3};
 use raster::{
-  Camera, Color, Rasterizer, RasterizerMetric, RasterizerMode, Scene, COLOR,
+  Camera, Color, Mesh, Rasterizer, RasterizerMetric, RasterizerMode, Scene,
+  COLOR,
 };
-use shader::{Light};
+use shader::{Light, TextureStash};
+use wavefront::MeshObject;
 
 mod lerp;
 mod raster;
@@ -26,6 +33,29 @@ pub struct RenderResult {
   pub metric: RasterizerMetric,
 }
 
+struct SceneCache {
+  stash: HashMap<PathBuf, MeshObject>,
+}
+
+impl SceneCache {
+  fn new() -> Self {
+    Self {
+      stash: HashMap::new(),
+    }
+  }
+
+  fn get_mesh_obj<'a>(&'a mut self, path: &Path) -> &'a MeshObject {
+    self
+      .stash
+      .entry(path.to_path_buf())
+      .or_insert_with(move || Self::load_wavefront_meshes(path))
+  }
+
+  fn load_wavefront_meshes(path: &Path) -> MeshObject {
+    wavefront::load(path).unwrap()
+  }
+}
+
 struct RasterApp {
   texture_size: (usize, usize),
   texture_handle: Option<egui::TextureId>,
@@ -33,6 +63,7 @@ struct RasterApp {
   redraw: bool,
   models: Vec<PathBuf>,
   tunable: Tunable,
+  cache: SceneCache,
 }
 
 impl Default for RasterApp {
@@ -44,6 +75,7 @@ impl Default for RasterApp {
       redraw: true,
       tunable: Tunable::default(),
       models: vec![],
+      cache: SceneCache::new(),
     }
   }
 }
@@ -80,7 +112,7 @@ impl Default for Tunable {
       trans_z: 3.0,
       mode: RasterizerMode::Shaded,
       zbuffer_mode: false,
-      model_file: "assets/pumpkin_nosubdiv.obj".into(),
+      model_file: "assets/chair.obj".into(),
       double_faced: false,
     }
   }
@@ -247,7 +279,7 @@ impl RasterApp {
     }
 
     let result = {
-      let scene = sample_scene(&self.tunable);
+      let scene = sample_scene(&self.tunable, &mut self.cache);
       render_scene(&self.tunable, self.texture_size, &scene)
     };
 
@@ -329,7 +361,7 @@ fn render_scene(
   }
 }
 
-fn sample_scene(tun: &Tunable) -> Scene {
+fn sample_scene<'a>(tun: &'a Tunable, cache: &'a mut SceneCache) -> Scene<'a> {
   let fov = tun.fov / 360.0 * PI;
   let zfar = if tun.znear == tun.zfar {
     // avoid znear == zfar
@@ -355,9 +387,9 @@ fn sample_scene(tun: &Tunable) -> Scene {
   let rotation = Rotation::from_euler_angles(tun.rot_x, tun.rot_y, tun.rot_z)
     .to_homogeneous();
 
-  let meshes = wavefront::load(&tun.model_file).unwrap();
-
-  for mesh in meshes {
+  let mesh_obj = cache.get_mesh_obj(&tun.model_file);
+  scene.set_texture_stash(&mesh_obj.textures);
+  for mesh in mesh_obj.meshes.clone() {
     let mesh = mesh
       .transformed(rotation)
       .transformed(translation)
@@ -375,6 +407,10 @@ fn sample_scene(tun: &Tunable) -> Scene {
 
 fn bench_render() {
   let tun = Tunable::default();
-  let scene = sample_scene(&tun);
+  let mut cache = SceneCache::new();
+  let scene = sample_scene(&tun, &mut cache);
+  render_scene(&tun, (600, 400), &scene);
+  render_scene(&tun, (600, 400), &scene);
+  render_scene(&tun, (600, 400), &scene);
   render_scene(&tun, (600, 400), &scene);
 }

@@ -6,6 +6,29 @@ use crate::{
   util::reflect,
 };
 
+pub type TextureHandle = usize;
+
+#[derive(Clone)]
+pub struct TextureStash {
+  textures: Vec<Image<Color>>,
+}
+
+impl TextureStash {
+  pub fn new() -> Self {
+    Self { textures: vec![] }
+  }
+
+  pub fn add(&mut self, texture: Image<Color>) -> TextureHandle {
+    let handle = self.textures.len();
+    self.textures.push(texture);
+    handle
+  }
+
+  pub fn get(&self, handle: TextureHandle) -> &Image<Color> {
+    &self.textures[handle]
+  }
+}
+
 pub struct Light {
   // in world coordinates
   pos: Point3<f32>,
@@ -151,7 +174,7 @@ pub struct SimpleMaterial {
   // (d)
   pub dissolve: f32,
   // (map_Kd)
-  pub color_texture: Option<Image<Color>>,
+  pub color_texture: Option<TextureHandle>,
 }
 
 impl Default for SimpleMaterial {

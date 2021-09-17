@@ -5,17 +5,19 @@ use nalgebra::{Point3, Vector2, Vector3};
 
 use crate::{
   raster::{Color, Face, Image, IndexedPolyVert, Mesh, COLOR},
-  shader::SimpleMaterial,
+  shader::{SimpleMaterial, TextureStash},
 };
 
 struct Mtl {
-  map: HashMap<String, SimpleMaterial>,
+  pub map: HashMap<String, SimpleMaterial>,
+  pub textures: TextureStash,
 }
 
 impl Mtl {
   pub fn new() -> Self {
     Self {
       map: HashMap::new(),
+      textures: TextureStash::new(),
     }
   }
 
@@ -26,6 +28,7 @@ impl Mtl {
   }
 
   pub fn parse(s: &str, rel_path: &Path) -> Result<Self> {
+    let mut textures = TextureStash::new();
     let mut res = HashMap::new();
     let mut curr_mtl_name = None;
     let mut curr_mat = SimpleMaterial::default();
@@ -56,7 +59,8 @@ impl Mtl {
         ["Ns", v] => curr_mat.specular_highlight = parse_float(v)?,
         ["d", d] => curr_mat.dissolve = parse_float(d)?,
         ["map_Kd", texture @ ..] => {
-          curr_mat.color_texture = Some(parse_texture_color(texture, rel_path)?)
+          let handle = textures.add(parse_texture_color(texture, rel_path)?);
+          curr_mat.color_texture = Some(handle);
         }
         [_any @ ..] => {}
       }
@@ -66,7 +70,7 @@ impl Mtl {
       res.insert(name, curr_mat);
     }
 
-    Ok(Mtl { map: res })
+    Ok(Mtl { map: res, textures })
   }
 
   fn get(&self, material_name: &str) -> Result<SimpleMaterial> {
@@ -80,8 +84,8 @@ impl Mtl {
 }
 
 struct Obj {
-  mtl: Mtl,
-  objs: Vec<Mesh>,
+  pub mtl: Mtl,
+  pub objs: Vec<Mesh>,
 }
 
 impl Obj {
@@ -230,6 +234,15 @@ fn parse_texture_color(
   Ok(img)
 }
 
-pub fn load(path: &Path) -> Result<Vec<Mesh>> {
-  Ok(Obj::load(path)?.into_meshes())
+pub struct MeshObject {
+  pub meshes: Vec<Mesh>,
+  pub textures: TextureStash,
+}
+
+pub fn load(path: &Path) -> Result<MeshObject> {
+  let obj = Obj::load(path)?;
+  Ok(MeshObject {
+    textures: obj.mtl.textures,
+    meshes: obj.objs,
+  })
 }

@@ -5,9 +5,8 @@ use nalgebra::{Matrix4, Point3, Vector2, Vector3, Vector4};
 
 use crate::{
   lerp::{lerp, lerp_closed_iter, Lerp},
-  shader::{PureColor, Shader, ShaderContext},
+  shader::{Light, Shader, ShaderContext, SimpleMaterial},
   util::f32_cmp,
-  wavefront::Wavefront,
 };
 
 pub type Color = Vector4<f32>;
@@ -15,6 +14,10 @@ pub type Color = Vector4<f32>;
 #[allow(non_snake_case)]
 pub(crate) mod COLOR {
   use super::*;
+
+  pub const fn black() -> Color {
+    rgba(0.0, 0.0, 0.0, 1.0)
+  }
 
   pub const fn rgb(r: f32, g: f32, b: f32) -> Color {
     rgba(r, g, b, 1.0)
@@ -351,49 +354,31 @@ pub struct PolyVert<'a> {
 }
 
 pub struct Mesh {
-  transform: Matrix4<f32>,
-  vertices: Vec<Point3<f32>>,
-  vertex_normals: Vec<Vector3<f32>>,
-  texture_coords: Vec<Vector2<f32>>,
-  faces: Vec<Face<IndexedPolyVert>>,
-  shader: Box<dyn Shader>,
-  double_faced: bool,
+  pub material: Option<SimpleMaterial>,
+  pub transform: Matrix4<f32>,
+  pub vertices: Vec<Point3<f32>>,
+  pub vertex_normals: Vec<Vector3<f32>>,
+  pub texture_coords: Vec<Vector2<f32>>,
+  pub faces: Vec<Face<IndexedPolyVert>>,
+  pub double_faced: bool,
 }
 
 impl Mesh {
   #[allow(unused)]
   pub fn new() -> Self {
-    // let shader = PureColor::new(COLOR::rgba(1.0, 0.0, 0.0, 0.0));
-    let shader = PureColor::new(COLOR::rgb(1.0, 0.5, 0.0));
-
     Self {
       transform: Matrix4::identity(),
       vertices: Default::default(),
       vertex_normals: Default::default(),
       texture_coords: Default::default(),
       faces: Vec::new(),
-      shader: Box::new(shader),
+      material: None,
       double_faced: false,
     }
   }
 
-  pub fn new_wavefront(wf: Wavefront) -> Self {
-    let shader = PureColor::new(COLOR::rgb(1.0, 0.5, 0.0));
-
-    Self {
-      transform: Matrix4::identity(),
-      vertices: wf.vertices,
-      vertex_normals: wf.vertex_normals,
-      texture_coords: wf.texture_coords,
-      faces: wf.faces,
-      shader: Box::new(shader),
-      double_faced: false,
-    }
-  }
-
-  pub fn shaded(mut self, shader: impl Shader + 'static) -> Self {
-    self.shader = Box::new(shader);
-    self
+  pub fn num_faces(&self) -> usize {
+    self.faces.len()
   }
 
   pub fn double_faced(mut self, double_faced: bool) -> Self {
@@ -425,10 +410,15 @@ impl Mesh {
     self.transform = transform * self.transform;
     self
   }
+
+  pub fn shader(&self) -> &dyn Shader {
+    self.material.as_ref().unwrap_or_else(|| SimpleMaterial::plaster())
+  }
 }
 
 pub struct Scene {
   camera: Camera,
+  lights: Vec<Light>,
   meshes: Vec<Mesh>,
 }
 
@@ -436,8 +426,13 @@ impl Scene {
   pub fn new(camera: Camera) -> Self {
     Self {
       camera,
+      lights: vec![],
       meshes: vec![],
     }
+  }
+
+  pub fn add_light(&mut self, light: Light) {
+    self.lights.push(light);
   }
 
   pub fn add_mesh(&mut self, mesh: Mesh) {
@@ -450,6 +445,10 @@ impl Scene {
 
   pub fn camera(&self) -> &Camera {
     &self.camera
+  }
+
+  pub fn lights(&self) -> &[Light] {
+    self.lights.as_slice()
   }
 }
 
@@ -469,8 +468,8 @@ impl Default for RasterizerMode {
 /// A point on screen with integer xy coordinates and floating depth (z)
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub struct Pt {
-  pub point: Point3<f32>,
-  pub orig_point: Point3<f32>,
+  pub clip_pos: Point3<f32>,
+  pub world_pos: Point3<f32>,
   pub color: Color,
   pub normal: Vector3<f32>,
   pub uv: Vector2<f32>,
@@ -494,8 +493,8 @@ impl<'a> From<&PolyVert<'a>> for Pt {
 impl Pt {
   pub fn new(point: Point3<f32>) -> Self {
     Self {
-      point,
-      orig_point: point,
+      clip_pos: point,
+      world_pos: point,
       color: COLOR::rgba(1.0, 0.0, 0.0, 1.0),
       uv: Vector2::new(0.0, 0.0),
       normal: point.coords,
@@ -512,15 +511,15 @@ impl Pt {
     self.normal = normal.normalize();
   }
 
-  pub fn x(&self) -> f32 {
-    self.point.x
+  pub fn clip_x(&self) -> f32 {
+    self.clip_pos.x
   }
-  pub fn y(&self) -> f32 {
-    self.point.y
+  pub fn clip_y(&self) -> f32 {
+    self.clip_pos.y
   }
 
   pub fn depth(&self) -> f32 {
-    self.point.z
+    self.clip_pos.z
   }
 }
 
@@ -531,8 +530,8 @@ impl Lerp for Pt {
     }
 
     Pt {
-      point: lerp(t, &self.point, &other.point),
-      orig_point: lerp(t, &self.orig_point, &other.orig_point),
+      clip_pos: lerp(t, &self.clip_pos, &other.clip_pos),
+      world_pos: lerp(t, &self.world_pos, &other.world_pos),
       normal: lerp(t, &self.normal, &other.normal),
       color: lerp(t, &self.color, &other.color),
       uv: lerp(t, &self.uv, &other.uv),
@@ -586,14 +585,13 @@ impl Rasterizer {
   }
 
   pub fn rasterize(&mut self, scene: &Scene) {
-    let camera = scene.camera();
     for mesh in scene.iter_meshes() {
       for face in mesh.faces() {
         let mut face: Face<Pt> = face.as_ref().convert();
-        let context = self.shader_context(camera, mesh);
-        let shader = mesh.shader.as_ref();
+        let context = self.shader_context(scene, mesh);
+        let shader = mesh.shader();
 
-        face.map_in_place(|mut p| mesh.shader.vertex(&context, &mut p));
+        face.map_in_place(|mut p| shader.vertex(&context, &mut p));
         self.metric.vertices_shaded += face.len();
 
         if self.is_hidden_surface(&face) {
@@ -637,12 +635,24 @@ impl Rasterizer {
   fn clip_triangle(&self, _trig: &Trig<Pt>) -> Vec<Trig<Pt>> {
     vec![&_trig]
       .into_iter()
-      .flat_map(|t| self.clip_triangle_component(&t, |p| p.point.z, -1.0, -1.0))
-      .flat_map(|t| self.clip_triangle_component(&t, |p| p.point.z, 1.0, 1.0))
-      .flat_map(|t| self.clip_triangle_component(&t, |p| p.point.x, -1.0, -1.0))
-      .flat_map(|t| self.clip_triangle_component(&t, |p| p.point.x, 1.0, 1.0))
-      .flat_map(|t| self.clip_triangle_component(&t, |p| p.point.y, -1.0, -1.0))
-      .flat_map(|t| self.clip_triangle_component(&t, |p| p.point.y, 1.0, 1.0))
+      .flat_map(|t| {
+        self.clip_triangle_component(&t, |p| p.clip_pos.z, -1.0, -1.0)
+      })
+      .flat_map(|t| {
+        self.clip_triangle_component(&t, |p| p.clip_pos.z, 1.0, 1.0)
+      })
+      .flat_map(|t| {
+        self.clip_triangle_component(&t, |p| p.clip_pos.x, -1.0, -1.0)
+      })
+      .flat_map(|t| {
+        self.clip_triangle_component(&t, |p| p.clip_pos.x, 1.0, 1.0)
+      })
+      .flat_map(|t| {
+        self.clip_triangle_component(&t, |p| p.clip_pos.y, -1.0, -1.0)
+      })
+      .flat_map(|t| {
+        self.clip_triangle_component(&t, |p| p.clip_pos.y, 1.0, 1.0)
+      })
       .collect()
   }
 
@@ -716,9 +726,9 @@ impl Rasterizer {
 
   // return false if the line is off-view and should be skipped
   fn clip_line(&self, a: &mut Pt, b: &mut Pt) -> bool {
-    let get_x = |p: &Pt| p.point.x;
-    let get_y = |p: &Pt| p.point.y;
-    let get_z = |p: &Pt| p.point.z;
+    let get_x = |p: &Pt| p.clip_pos.x;
+    let get_y = |p: &Pt| p.clip_pos.y;
+    let get_z = |p: &Pt| p.clip_pos.z;
 
     if !Self::clip_line_component(a, b, get_x, -1.0, 1.0) {
       return false;
@@ -793,7 +803,7 @@ impl Rasterizer {
 
   pub fn to_coords(&self, pt: &Pt) -> (i32, i32) {
     let (w, h) = self.size_f32();
-    let point = pt.point;
+    let point = pt.clip_pos;
     let x = 0.5 * w * (point.x + 1.0);
     let y = 0.5 * h * (1.0 - point.y);
     (x as i32, y as i32)
@@ -856,8 +866,8 @@ impl Rasterizer {
     }
 
     let positive_direction: Vector3<f32> = [0.0, 0.0, 1.0].into();
-    let v1 = face.vertices()[1].point - face.vertices()[0].point;
-    let v2 = face.vertices()[2].point - face.vertices()[0].point;
+    let v1 = face.vertices()[1].clip_pos - face.vertices()[0].clip_pos;
+    let v2 = face.vertices()[2].clip_pos - face.vertices()[0].clip_pos;
     let normal = v1.cross(&v2);
     // no need to get the real normalized normal because we don't need
     // an exact number. The sum of the normal value is enough.
@@ -906,8 +916,8 @@ impl Rasterizer {
   ) {
     self.metric.sub_triangles_rendered += 1;
 
-    let top_y = self.to_y_coord(top.y());
-    let bottom_y = self.to_y_coord(bottom_left.y());
+    let top_y = self.to_y_coord(top.clip_y());
+    let bottom_y = self.to_y_coord(bottom_left.clip_y());
     let h = (top_y - bottom_y).abs() as usize;
 
     let left_pts_iter = lerp_closed_iter(&top, &bottom_left, h);
@@ -928,8 +938,8 @@ impl Rasterizer {
   ) {
     self.metric.sub_triangles_rendered += 1;
 
-    let top_y = self.to_y_coord(top_left.y());
-    let bottom_y = self.to_y_coord(bottom.y());
+    let top_y = self.to_y_coord(top_left.clip_y());
+    let bottom_y = self.to_y_coord(bottom.clip_y());
     let h = (top_y - bottom_y).abs() as usize;
     // non-zero h
     let left_pts_iter = lerp_closed_iter(&top_left, &bottom, h);
@@ -940,10 +950,15 @@ impl Rasterizer {
     }
   }
 
-  fn shader_context(&self, camera: &Camera, mesh: &Mesh) -> ShaderContext {
+  fn shader_context<'a>(
+    &self,
+    scene: &'a Scene,
+    mesh: &Mesh,
+  ) -> ShaderContext<'a> {
     ShaderContext {
-      camera: camera.matrix(),
+      camera: scene.camera().matrix(),
       model: mesh.transform.clone(),
+      lights: scene.lights(),
     }
   }
 
@@ -988,28 +1003,29 @@ impl Rasterizer {
 
   fn horizontally_split_triangle(pts: &mut [Pt; 3]) -> [Option<[Pt; 3]>; 2] {
     const EPS: f32 = 0.0001;
-    pts.sort_unstable_by(|p1, p2| f32_cmp(&p1.y(), &p2.y()));
+    pts.sort_unstable_by(|p1, p2| f32_cmp(&p1.clip_y(), &p2.clip_y()));
 
-    if abs_diff_eq!(pts[0].y(), pts[2].y(), epsilon = EPS) {
+    if abs_diff_eq!(pts[0].clip_y(), pts[2].clip_y(), epsilon = EPS) {
       // just a flat line
       let upper_trig = [pts[0], pts[1], pts[2]];
       return [Some(upper_trig), None];
     }
 
-    if abs_diff_eq!(pts[0].y(), pts[1].y(), epsilon = EPS) {
+    if abs_diff_eq!(pts[0].clip_y(), pts[1].clip_y(), epsilon = EPS) {
       // a lower triangle
       let lower_trig = [pts[0], pts[1], pts[2]];
       return [None, Some(lower_trig)];
     }
 
-    if abs_diff_eq!(pts[1].y(), pts[2].y(), epsilon = EPS) {
+    if abs_diff_eq!(pts[1].clip_y(), pts[2].clip_y(), epsilon = EPS) {
       // a lower triangle
       let upper_trig = [pts[0], pts[1], pts[2]];
       return [Some(upper_trig), None];
     }
 
     // a normal triangle that we need to split
-    let t = (pts[1].y() - pts[0].y()) / (pts[2].y() - pts[0].y());
+    let t =
+      (pts[1].clip_y() - pts[0].clip_y()) / (pts[2].clip_y() - pts[0].clip_y());
     let ptl = lerp(t, &pts[0], &pts[2]);
     let ptr = pts[1];
 
@@ -1027,8 +1043,8 @@ impl Rasterizer {
     shader: &dyn Shader,
   ) {
     self.metric.horizontal_lines_drawn += 1;
-    let x1 = self.to_x_coord(p1.x());
-    let x2 = self.to_x_coord(p2.x());
+    let x1 = self.to_x_coord(p1.clip_x());
+    let x2 = self.to_x_coord(p2.clip_x());
     let w = (x1 - x2).abs() as usize;
     for p in lerp_closed_iter(&p1, &p2, w) {
       self.draw_pixel(p, context, shader);

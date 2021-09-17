@@ -6,13 +6,11 @@ use eframe::{
   epi::{self, TextureAllocator},
   NativeOptions,
 };
-use nalgebra::{Matrix4, Point3, Rotation, Vector3};
+use nalgebra::{Matrix4, Point3, Rotation, Translation3, Vector3};
 use raster::{
-  Camera, Color, Mesh, Rasterizer, RasterizerMetric, RasterizerMode, Scene,
-  COLOR,
+  Camera, Color, Rasterizer, RasterizerMetric, RasterizerMode, Scene, COLOR,
 };
-use shader::SpecularShader;
-use wavefront::Wavefront;
+use shader::{Light};
 
 mod lerp;
 mod raster;
@@ -352,19 +350,25 @@ fn sample_scene(tun: &Tunable) -> Scene {
   //   .transform_vector(&Vector3::new(tun.rot_horizontal, tun.rot_vertical, 0.0));
   let mut scene = Scene::new(camera);
 
-  let translation = Vector3::new(tun.trans_x, tun.trans_y, tun.trans_z);
-  let rotation = Rotation::from_euler_angles(tun.rot_x, tun.rot_y, tun.rot_z);
+  let translation =
+    Translation3::new(tun.trans_x, tun.trans_y, tun.trans_z).to_homogeneous();
+  let rotation = Rotation::from_euler_angles(tun.rot_x, tun.rot_y, tun.rot_z)
+    .to_homogeneous();
 
-  let wavefront = Wavefront::from_file(&tun.model_file).unwrap();
-  let shader =
-    SpecularShader::new(COLOR::rgb(1.0, 0.5, 0.0), Point3::new(5.0, 10.0, 5.0));
-  let mesh = Mesh::new_wavefront(wavefront)
-    .transformed(rotation.to_homogeneous())
-    .transformed(Matrix4::new_translation(&translation))
-    .shaded(shader)
-    .double_faced(tun.double_faced);
+  let meshes = wavefront::load(&tun.model_file).unwrap();
 
-  scene.add_mesh(mesh);
+  for mesh in meshes {
+    let mesh = mesh
+      .transformed(rotation)
+      .transformed(translation)
+      .double_faced(tun.double_faced);
+    scene.add_mesh(mesh);
+  }
+
+  scene.add_light(Light::new(
+    Point3::new(5.0, 10.0, 5.0),
+    COLOR::rgb(1.0, 1.0, 1.0),
+  ));
 
   scene
 }

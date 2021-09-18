@@ -1,5 +1,5 @@
 use lazy_static::lazy_static;
-use nalgebra::{Matrix4, Point3, Vector4};
+use nalgebra::{Matrix4, Point3, Vector2, Vector4};
 
 use crate::{
   raster::{Color, Image, Pt, COLOR},
@@ -24,6 +24,7 @@ impl TextureStash {
     handle
   }
 
+  #[allow(unused)]
   pub fn get(&self, handle: TextureHandle) -> &Image<Color> {
     &self.textures[handle]
   }
@@ -49,10 +50,42 @@ impl Light {
   }
 }
 
+#[derive(Debug, Clone)]
+pub enum TextureFilterMode {
+  Nearest,
+  Bilinear,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShaderOptions {
+  texture_filter_mode: TextureFilterMode,
+}
+
+impl Default for ShaderOptions {
+  fn default() -> Self {
+    Self {
+      texture_filter_mode: TextureFilterMode::Bilinear,
+    }
+  }
+}
+
 pub struct ShaderContext<'a> {
+  pub textures: &'a TextureStash,
   pub camera: Matrix4<f32>,
   pub model: Matrix4<f32>,
   pub lights: &'a [Light],
+  pub options: ShaderOptions,
+}
+
+impl<'a> ShaderContext<'a> {
+  pub fn get_texture(&self, handle: TextureHandle, uv: Vector2<f32>) -> Color {
+    let texture = self.textures.get(handle);
+
+    match self.options.texture_filter_mode {
+      TextureFilterMode::Nearest => texture.nearest_color(uv),
+      TextureFilterMode::Bilinear => texture.bilinear_color(uv),
+    }
+  }
 }
 
 pub trait Shader {
@@ -203,8 +236,12 @@ impl Shader for SimpleMaterial {
 
       // diffuse color
       let light_intensity = light_angle.dot(&normal).max(0.0);
-      let diffuse_color = light.color().component_mul(&self.diffuse_color);
-      color += diffuse_color * light_intensity;
+      let diffuse_color = match self.color_texture {
+        Some(handle) => context.get_texture(handle, pt.uv),
+        None => self.diffuse_color,
+      };
+      let diffuse_light_color = light.color().component_mul(&diffuse_color);
+      color += diffuse_light_color * light_intensity;
 
       // specular highlight color
       let specular_sharpness = light_refl_angle

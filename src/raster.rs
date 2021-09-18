@@ -5,7 +5,9 @@ use nalgebra::{Matrix4, Point3, Vector2, Vector3, Vector4};
 
 use crate::{
   lerp::{lerp, lerp_closed_iter, Lerp},
-  shader::{Light, Shader, ShaderContext, SimpleMaterial, TextureStash},
+  shader::{
+    Light, Shader, ShaderContext, ShaderOptions, SimpleMaterial, TextureStash,
+  },
   util::f32_cmp,
 };
 
@@ -121,6 +123,54 @@ impl<T> Image<T> {
     let dimension = self.dimension;
     let pixels = self.pixels.into_iter().map(f).collect();
     Image { pixels, dimension }
+  }
+}
+
+impl Image<Color> {
+  pub fn nearest_color(&self, uv: Vector2<f32>) -> Color {
+    let coords = self.nearest_coords(uv, (0, 0));
+    *self.pixel(coords).unwrap()
+  }
+
+  pub fn bilinear_color(&self, uv: Vector2<f32>) -> Color {
+    // row 1: |a b|
+    // row 2: |c d|
+    let color_a = *self.pixel(self.nearest_coords(uv, (0, 0))).unwrap();
+    let color_b = *self.pixel(self.nearest_coords(uv, (1, 0))).unwrap();
+    let color_c = *self.pixel(self.nearest_coords(uv, (0, 1))).unwrap();
+    let color_d = *self.pixel(self.nearest_coords(uv, (1, 1))).unwrap();
+
+    let x = uv.x * (self.width() - 1) as f32;
+    let y = uv.y * (self.height() - 1) as f32;
+    let xt = x - x.floor();
+    let yt = y - y.floor();
+
+    let color_l = lerp(yt, &color_a, &color_c);
+    let color_r = lerp(yt, &color_b, &color_d);
+    let color = lerp(xt, &color_l, &color_r);
+
+    color
+  }
+
+  /// if out of bound, return the nearest coordinates within the bound
+  fn nearest_coords(&self, uv: Vector2<f32>, offset: (i32, i32)) -> (i32, i32) {
+    let mut x = (uv.x * (self.width() - 1) as f32) as i32 + offset.0;
+    let mut y = (uv.y * (self.height() - 1) as f32) as i32 + offset.1;
+
+    if x < 0 {
+      x = 0;
+    }
+    if y < 0 {
+      y = 0;
+    }
+    if x >= self.width() as i32 {
+      x = self.width() as i32 - 1;
+    }
+    if y >= self.height() as i32 {
+      y = self.height() as i32 - 1;
+    }
+
+    (x, y)
   }
 }
 
@@ -441,6 +491,10 @@ impl<'a> Scene<'a> {
     self.textures = Cow::Borrowed(textures);
   }
 
+  pub fn texture_stash(&self) -> &TextureStash {
+    &self.textures
+  }
+
   pub fn add_light(&mut self, light: Light) {
     self.lights.push(light);
   }
@@ -449,6 +503,7 @@ impl<'a> Scene<'a> {
     self.meshes.push(mesh);
   }
 
+  #[allow(unused)]
   pub fn add_meshes(&mut self, mesh: &[Mesh]) {
     self.meshes.extend_from_slice(mesh);
   }
@@ -575,6 +630,7 @@ pub struct Rasterizer {
   image: Image<Color>,
   zbuffer: Image<f32>,
   metric: RasterizerMetric,
+  shader_options: ShaderOptions,
 }
 
 impl Rasterizer {
@@ -584,6 +640,7 @@ impl Rasterizer {
     let mode = RasterizerMode::Shaded;
     let size = (image.width() as f32, image.height() as f32);
     let metric = Default::default();
+    let shader_options = Default::default();
 
     Self {
       size,
@@ -591,6 +648,7 @@ impl Rasterizer {
       zbuffer,
       mode,
       metric,
+      shader_options,
     }
   }
 
@@ -970,9 +1028,11 @@ impl Rasterizer {
     mesh: &Mesh,
   ) -> ShaderContext<'a> {
     ShaderContext {
+      textures: scene.texture_stash(),
       camera: scene.camera().matrix(),
       model: mesh.transform.clone(),
       lights: scene.lights(),
+      options: self.shader_options.clone(),
     }
   }
 

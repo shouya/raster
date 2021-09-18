@@ -11,12 +11,11 @@ use eframe::{
   epi::{self, TextureAllocator},
   NativeOptions,
 };
-use nalgebra::{Matrix4, Point3, Rotation, Translation3, Vector3};
+use nalgebra::{Point3, Rotation, Translation3};
 use raster::{
-  Camera, Color, Mesh, Rasterizer, RasterizerMetric, RasterizerMode, Scene,
-  COLOR,
+  Camera, Color, Rasterizer, RasterizerMetric, RasterizerMode, Scene, COLOR,
 };
-use shader::{Light, TextureStash};
+use shader::Light;
 use wavefront::MeshObject;
 
 mod lerp;

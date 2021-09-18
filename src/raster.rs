@@ -2,6 +2,7 @@ use std::{borrow::Cow, cmp::max, convert::TryInto};
 
 use approx::abs_diff_eq;
 use nalgebra::{Matrix4, Point3, Vector2, Vector3, Vector4};
+use smallvec::{smallvec, SmallVec};
 
 use crate::{
   lerp::{lerp, lerp_closed_iter, Lerp},
@@ -157,12 +158,12 @@ impl Image<Color> {
     let mut x = (uv.x * (self.width() - 1) as f32) as i32 + offset.0;
     let mut y = (uv.y * (self.height() - 1) as f32) as i32 + offset.1;
 
-    if x < 0 {
-      x = 0;
-    }
-    if y < 0 {
-      y = 0;
-    }
+    // if x < 0 {
+    //   x = 0;
+    // }
+    // if y < 0 {
+    //   y = 0;
+    // }
     if x >= self.width() as i32 {
       x = self.width() as i32 - 1;
     }
@@ -708,8 +709,20 @@ impl Rasterizer {
     }
   }
 
-  fn clip_triangle(&self, _trig: &Trig<Pt>) -> Vec<Trig<Pt>> {
-    vec![&_trig]
+  fn contains_triangle(&self, trig: &Trig<Pt>) -> bool {
+    let in_range = |v| (0.0..=1.0).contains(&v);
+    in_range(trig.a().clip_pos.x)
+      && in_range(trig.a().clip_pos.y)
+      && in_range(trig.a().clip_pos.z)
+  }
+
+  fn clip_triangle(&self, trig: &Trig<Pt>) -> SmallVec<[Trig<Pt>; 2]> {
+    if self.contains_triangle(trig) {
+      return smallvec![trig.clone()];
+    }
+
+    let init: SmallVec<[&Trig<Pt>; 2]> = smallvec![trig];
+    init
       .into_iter()
       .flat_map(|t| {
         self.clip_triangle_component(&t, |p| p.clip_pos.z, -1.0, -1.0)
@@ -738,7 +751,7 @@ impl Rasterizer {
     get_comp: F,
     lim: f32,
     sign: f32,
-  ) -> Vec<Trig<Pt>>
+  ) -> SmallVec<[Trig<Pt>; 2]>
   where
     F: Fn(&Pt) -> f32,
   {
@@ -754,47 +767,56 @@ impl Rasterizer {
 
     // case 1: all vertex within range
     if in_lim(a) && in_lim(b) && in_lim(c) {
-      return vec![trig.clone()];
+      return smallvec![trig.clone()];
     }
 
     // case 2: all vertex out of range
     if out_lim(a) && out_lim(b) && out_lim(c) {
       // within the range; draw without clipping
-      return vec![];
+      return smallvec![];
     }
 
     // case 3: two vertices out of range
     if in_lim(a) && out_lim(b) && out_lim(c) {
       let new_vb = lerp((lim - a) / (b - a), va, vb);
       let new_vc = lerp((lim - a) / (c - a), va, vc);
-      return vec![[*va, new_vb, new_vc].into()];
+      return smallvec![[*va, new_vb, new_vc].into()];
     }
     if out_lim(a) && in_lim(b) && out_lim(c) {
       let new_va = lerp((lim - b) / (a - b), vb, va);
       let new_vc = lerp((lim - b) / (c - b), vb, vc);
-      return vec![[new_va, *vb, new_vc].into()];
+      return smallvec![[new_va, *vb, new_vc].into()];
     }
     if out_lim(a) && out_lim(b) && in_lim(c) {
       let new_va = lerp((lim - c) / (a - c), vc, va);
       let new_vb = lerp((lim - c) / (b - c), vc, vb);
-      return vec![[new_va, new_vb, *vc].into()];
+      return smallvec![[new_va, new_vb, *vc].into()];
     }
 
     // case 4: one vertex out of range
     if out_lim(a) && in_lim(b) && in_lim(c) {
       let new_vb = lerp((lim - a) / (b - a), va, vb);
       let new_vc = lerp((lim - a) / (c - a), va, vc);
-      return vec![[*vb, *vc, new_vb].into(), [*vc, new_vc, new_vb].into()];
+      return smallvec![
+        [*vb, *vc, new_vb].into(),
+        [*vc, new_vc, new_vb].into()
+      ];
     }
     if in_lim(a) && out_lim(b) && in_lim(c) {
       let new_va = lerp((lim - b) / (a - b), vb, va);
       let new_vc = lerp((lim - b) / (c - b), vb, vc);
-      return vec![[*va, *vc, new_va].into(), [*vc, new_va, new_vc].into()];
+      return smallvec![
+        [*va, *vc, new_va].into(),
+        [*vc, new_va, new_vc].into()
+      ];
     }
     if in_lim(a) && in_lim(b) && out_lim(c) {
       let new_va = lerp((lim - c) / (a - c), vc, va);
       let new_vb = lerp((lim - c) / (b - c), vc, vb);
-      return vec![[*va, *vb, new_va].into(), [*vb, new_va, new_vb].into()];
+      return smallvec![
+        [*va, *vb, new_va].into(),
+        [*vb, new_va, new_vb].into()
+      ];
     }
 
     unreachable!()

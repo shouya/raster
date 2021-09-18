@@ -100,8 +100,8 @@ impl Default for Tunable {
       fov: 100.0,
       znear: 0.1,
       zfar: 1000.0,
-      rot: [0.0; 3],
-      trans: [0.0, 0.0, 3.0],
+      rot: [0.783, -0.3635, -0.1202],
+      trans: [0.0, 0.0, 4.4579],
       shader_options: Default::default(),
       mode: RasterizerMode::Shaded,
       zbuffer_mode: false,
@@ -470,9 +470,10 @@ fn sample_scene<'a>(tun: &'a Tunable, cache: &'a mut SceneCache) -> Scene<'a> {
 fn bench_render() {
   let tun = Tunable::default();
   let mut cache = SceneCache::new();
-  let scene = sample_scene(&tun, &mut cache);
-  render_scene(&tun, (600, 400), &scene);
-  render_scene(&tun, (600, 400), &scene);
-  render_scene(&tun, (600, 400), &scene);
-  render_scene(&tun, (600, 400), &scene);
+  const N: usize = 20;
+
+  for _ in 0..N {
+    let scene = sample_scene(&tun, &mut cache);
+    render_scene(&tun, (600, 400), &scene);
+  }
 }

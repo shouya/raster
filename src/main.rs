@@ -7,7 +7,7 @@ use std::{
 
 use eframe::{
   self,
-  egui::{self, ComboBox, Vec2},
+  egui::{self, CollapsingHeader, ComboBox, Vec2},
   epi::{self, TextureAllocator},
   NativeOptions,
 };
@@ -15,7 +15,7 @@ use nalgebra::{Point3, Rotation, Translation3};
 use raster::{
   Camera, Color, Rasterizer, RasterizerMetric, RasterizerMode, Scene, COLOR,
 };
-use shader::Light;
+use shader::{Light, ShaderOptions};
 use wavefront::MeshObject;
 
 mod lerp;
@@ -84,16 +84,13 @@ pub struct Tunable {
   fov: f32,
   znear: f32,
   zfar: f32,
-  rot_x: f32,
-  rot_y: f32,
-  rot_z: f32,
-  trans_x: f32,
-  trans_y: f32,
-  trans_z: f32,
+  rot: [f32; 3],
+  trans: [f32; 3],
   mode: RasterizerMode,
   zbuffer_mode: bool,
   model_file: PathBuf,
   double_faced: bool,
+  options: ShaderOptions,
 }
 
 impl Default for Tunable {
@@ -103,12 +100,9 @@ impl Default for Tunable {
       fov: 100.0,
       znear: 0.1,
       zfar: 1000.0,
-      rot_x: 0.0,
-      rot_y: 0.0,
-      rot_z: 0.0,
-      trans_x: 0.0,
-      trans_y: 0.0,
-      trans_z: 3.0,
+      rot: [0.0; 3],
+      trans: [0.0, 0.0, 3.0],
+      options: Default::default(),
       mode: RasterizerMode::Shaded,
       zbuffer_mode: false,
       model_file: "assets/chair.obj".into(),
@@ -131,18 +125,33 @@ fn convert_texture(image: &Image<Color>) -> Vec<egui::Color32> {
 
 impl RasterApp {
   fn draw_tunables(&mut self, ui: &mut egui::Ui) {
+    CollapsingHeader::new("Camera control")
+      .default_open(true)
+      .show(ui, |ui| {
+        self.draw_camera_control(ui);
+      });
+
+    CollapsingHeader::new("Model transformation")
+      .default_open(true)
+      .show(ui, |ui| {
+        self.draw_model_rotation(ui);
+        self.draw_model_translation(ui);
+      });
+
+    CollapsingHeader::new("Shader options")
+      .default_open(true)
+      .show(ui, |ui| {
+        self.draw_shader_options(ui);
+      });
+  }
+
+  fn draw_camera_control(&mut self, ui: &mut egui::Ui) {
     let t = &mut self.tunable;
     let sliders = [
       (&mut t.distance, -10.0, 100.0, "Distance"),
       (&mut t.fov, 10.0, 180.0, "FoV"),
       (&mut t.znear, -100.0, 100.0, "Z near"),
       (&mut t.zfar, -100.0, 100.0, "Z far"),
-      (&mut t.rot_x, -2.0 * PI, 2.0 * PI, "Rotation (X)"),
-      (&mut t.rot_y, -2.0 * PI, 2.0 * PI, "Rotation (X)"),
-      (&mut t.rot_z, -2.0 * PI, 2.0 * PI, "Rotation (Z)"),
-      (&mut t.trans_x, -5.0, 5.0, "Translation (X)"),
-      (&mut t.trans_y, -5.0, 5.0, "Translation (Y)"),
-      (&mut t.trans_z, -5.0, 5.0, "Translation (Z)"),
     ];
 
     for (v, mi, ma, t) in sliders {
@@ -150,10 +159,36 @@ impl RasterApp {
         self.redraw = true;
       }
     }
+  }
 
-    ui.separator();
+  fn draw_model_rotation(&mut self, ui: &mut egui::Ui) {
+    ui.horizontal_top(|ui| {
+      let rot = &mut self.tunable.rot;
+      for i in 0..=2 {
+        if ui
+          .add(egui::DragValue::new(&mut rot[i]).speed(0.01))
+          .changed()
+        {
+          self.redraw = true;
+        }
+      }
+      ui.label("Rotation");
+    });
+  }
 
-    self.draw_shader_options(ui);
+  fn draw_model_translation(&mut self, ui: &mut egui::Ui) {
+    ui.horizontal_top(|ui| {
+      let trans = &mut self.tunable.trans;
+      for i in 0..=2 {
+        if ui
+          .add(egui::DragValue::new(&mut trans[i]).speed(0.01))
+          .changed()
+        {
+          self.redraw = true;
+        }
+      }
+      ui.label("Translation");
+    });
   }
 
   fn draw_shader_options(&mut self, ui: &mut egui::Ui) {
@@ -227,23 +262,24 @@ impl RasterApp {
             d.x / size.0 * ROTATION_SPEED,
             0.0,
           );
-          let rot_old = Rotation::from_euler_angles(t.rot_x, t.rot_y, t.rot_z);
+          let rot_old =
+            Rotation::from_euler_angles(t.rot[0], t.rot[1], t.rot[2]);
           let rot_new = (rot_delta * rot_old).euler_angles();
-          self.tunable.rot_x = rot_new.0;
-          self.tunable.rot_y = rot_new.1;
-          self.tunable.rot_z = rot_new.2;
+          self.tunable.rot[0] = rot_new.0;
+          self.tunable.rot[1] = rot_new.1;
+          self.tunable.rot[2] = rot_new.2;
           self.redraw = true;
         }
         if resp.dragged_by(Middle) {
-          self.tunable.trans_x += d.x * TRANSLATION_SPEED;
-          self.tunable.trans_y -= d.y * TRANSLATION_SPEED;
+          self.tunable.trans[0] += d.x * TRANSLATION_SPEED;
+          self.tunable.trans[1] -= d.y * TRANSLATION_SPEED;
           self.redraw = true;
         }
       }
 
       let scroll_y = resp.ctx.input().scroll_delta.y;
       if scroll_y != 0.0 {
-        self.tunable.trans_z += scroll_y * TRANSLATION_SPEED;
+        self.tunable.trans[2] += scroll_y * TRANSLATION_SPEED;
         self.redraw = true;
       }
 
@@ -386,10 +422,10 @@ fn sample_scene<'a>(tun: &'a Tunable, cache: &'a mut SceneCache) -> Scene<'a> {
   //   .transform_vector(&Vector3::new(tun.rot_horizontal, tun.rot_vertical, 0.0));
   let mut scene = Scene::new(camera);
 
-  let translation =
-    Translation3::new(tun.trans_x, tun.trans_y, tun.trans_z).to_homogeneous();
-  let rotation = Rotation::from_euler_angles(tun.rot_x, tun.rot_y, tun.rot_z)
-    .to_homogeneous();
+  let translation = Translation3::from(tun.trans).to_homogeneous();
+  let rotation =
+    Rotation::from_euler_angles(tun.rot[0], tun.rot[1], tun.rot[2])
+      .to_homogeneous();
 
   let mesh_obj = cache.get_mesh_obj(&tun.model_file);
   scene.set_texture_stash(&mesh_obj.textures);

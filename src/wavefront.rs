@@ -96,10 +96,6 @@ impl Obj {
     }
   }
 
-  pub fn into_meshes(self) -> Vec<Mesh> {
-    self.objs
-  }
-
   pub fn load(path: &Path) -> Result<Self> {
     let mut buf = String::new();
     File::open(path)?.read_to_string(&mut buf)?;

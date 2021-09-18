@@ -50,15 +50,15 @@ impl Light {
   }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TextureFilterMode {
   Nearest,
   Bilinear,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShaderOptions {
-  texture_filter_mode: TextureFilterMode,
+  pub texture_filter_mode: TextureFilterMode,
 }
 
 impl Default for ShaderOptions {

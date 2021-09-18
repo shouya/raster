@@ -652,6 +652,10 @@ impl Rasterizer {
     }
   }
 
+  pub fn set_shader_options(&mut self, options: ShaderOptions) {
+    self.shader_options = options;
+  }
+
   pub fn set_mode(&mut self, mode: RasterizerMode) {
     self.mode = mode;
   }

@@ -24,7 +24,7 @@ mod shader;
 mod util;
 mod wavefront;
 
-use crate::raster::Image;
+use crate::{raster::Image, shader::TextureFilterMode};
 
 pub struct RenderResult {
   pub image: Image<Color>,
@@ -90,7 +90,7 @@ pub struct Tunable {
   zbuffer_mode: bool,
   model_file: PathBuf,
   double_faced: bool,
-  options: ShaderOptions,
+  shader_options: ShaderOptions,
 }
 
 impl Default for Tunable {
@@ -102,7 +102,7 @@ impl Default for Tunable {
       zfar: 1000.0,
       rot: [0.0; 3],
       trans: [0.0, 0.0, 3.0],
-      options: Default::default(),
+      shader_options: Default::default(),
       mode: RasterizerMode::Shaded,
       zbuffer_mode: false,
       model_file: "assets/chair.obj".into(),
@@ -129,6 +129,12 @@ impl RasterApp {
       .default_open(true)
       .show(ui, |ui| {
         self.draw_camera_control(ui);
+      });
+
+    CollapsingHeader::new("Model selection")
+      .default_open(true)
+      .show(ui, |ui| {
+        self.draw_model_selection(ui);
       });
 
     CollapsingHeader::new("Model transformation")
@@ -213,6 +219,29 @@ impl RasterApp {
       self.redraw = true;
     }
 
+    if ui
+      .checkbox(&mut t.double_faced, "Double-faced mesh")
+      .changed()
+    {
+      self.redraw = true;
+    }
+
+    use TextureFilterMode::*;
+    let texture_filter_modes =
+      [(Nearest, "Nearest pixel"), (Bilinear, "Bilinear")];
+
+    ui.horizontal(|ui| {
+      let t = &mut self.tunable.shader_options.texture_filter_mode;
+      for (mode, text) in texture_filter_modes {
+        if ui.radio_value(t, mode, text).clicked() {
+          self.redraw = true;
+        }
+      }
+    });
+  }
+
+  fn draw_model_selection(&mut self, ui: &mut egui::Ui) {
+    let t = &mut self.tunable;
     let model_file_name = t.model_file.file_stem().unwrap().to_str().unwrap();
 
     ComboBox::from_label("Select model")
@@ -227,14 +256,6 @@ impl RasterApp {
           }
         }
       });
-
-    let t = &mut self.tunable;
-    if ui
-      .checkbox(&mut t.double_faced, "Double-faced mesh")
-      .changed()
-    {
-      self.redraw = true;
-    }
   }
 
   fn draw_canvas(&mut self, ui: &mut egui::Ui) {
@@ -393,6 +414,7 @@ fn render_scene(
 ) -> RenderResult {
   let mut raster = Rasterizer::new(size);
   raster.set_mode(tun.mode);
+  raster.set_shader_options(tun.shader_options.clone());
   raster.rasterize(&scene);
 
   RenderResult {

@@ -125,6 +125,10 @@ impl<T> Image<T> {
     let pixels = self.pixels.into_iter().map(f).collect();
     Image { pixels, dimension }
   }
+
+  pub fn size(&self) -> (usize, usize) {
+    self.dimension
+  }
 }
 
 impl Image<Color> {

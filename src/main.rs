@@ -91,6 +91,7 @@ pub struct Tunable {
   model_file: PathBuf,
   double_faced: bool,
   shader_options: ShaderOptions,
+  super_sampling: f32,
 }
 
 impl Default for Tunable {
@@ -107,6 +108,7 @@ impl Default for Tunable {
       zbuffer_mode: false,
       model_file: "assets/chair.obj".into(),
       double_faced: false,
+      super_sampling: 1.0,
     }
   }
 }
@@ -238,6 +240,16 @@ impl RasterApp {
         }
       }
     });
+
+    ui.horizontal(|ui| {
+      let t = &mut self.tunable.super_sampling;
+      ui.label("Supersampling");
+      for n in [0.5, 1.0, 2.0, 3.0] {
+        if ui.radio_value(t, n, format!("{:.2}x", n)).clicked() {
+          self.redraw = true;
+        }
+      }
+    });
   }
 
   fn draw_model_selection(&mut self, ui: &mut egui::Ui) {
@@ -343,14 +355,15 @@ impl RasterApp {
       tex_alloc.free(texture_id);
     }
 
+    let image_size = result.image.size();
     let texture_data = if self.tunable.zbuffer_mode {
       convert_texture(&result.zbuf_image)
     } else {
       convert_texture(&result.image)
     };
 
-    let texture_id = tex_alloc
-      .alloc_srgba_premultiplied(self.texture_size, texture_data.as_slice());
+    let texture_id =
+      tex_alloc.alloc_srgba_premultiplied(image_size, texture_data.as_slice());
 
     self.texture_handle = Some(texture_id);
     self.render_result = Some(result);
@@ -412,7 +425,11 @@ fn render_scene(
   size: (usize, usize),
   scene: &Scene,
 ) -> RenderResult {
-  let mut raster = Rasterizer::new(size);
+  let real_size = (
+    (size.0 as f32 * tun.super_sampling) as usize,
+    (size.1 as f32 * tun.super_sampling) as usize,
+  );
+  let mut raster = Rasterizer::new(real_size);
   raster.set_mode(tun.mode);
   raster.set_shader_options(tun.shader_options.clone());
   raster.rasterize(&scene);

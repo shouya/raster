@@ -7,7 +7,7 @@ use std::{
 
 use eframe::{
   self,
-  egui::{self, CollapsingHeader, ComboBox, Vec2},
+  egui::{self, color_picker::show_color, CollapsingHeader, ComboBox, Vec2},
   epi::{self, TextureAllocator},
   NativeOptions,
 };
@@ -245,7 +245,7 @@ impl RasterApp {
       let t = &mut self.tunable.super_sampling;
       ui.label("Supersampling");
       for n in [0.5, 1.0, 2.0, 3.0] {
-        if ui.radio_value(t, n, format!("{:.2}x", n)).clicked() {
+        if ui.radio_value(t, n, format!("{:.1}x", n)).clicked() {
           self.redraw = true;
         }
       }
@@ -318,24 +318,10 @@ impl RasterApp {
 
       let topleft = resp.rect.min;
       if let Some(mut pos) = resp.hover_pos() {
-        pos -= topleft.to_vec2();
+        pos -= dbg!(topleft.to_vec2());
+        // pos.x -= spacing;
         resp.on_hover_ui_at_pointer(|ui| {
-          let coords = (pos.x as i32, pos.y as i32);
-          ui.label(format!("{},{}", coords.0, coords.1));
-          if let Some(color) =
-            self.render_result.as_ref().unwrap().image.pixel(coords)
-          {
-            ui.label(format!("{:.2},{:.2},{:.2}", color.x, color.y, color.z));
-          }
-          if let Some(color) = self
-            .render_result
-            .as_ref()
-            .unwrap()
-            .zbuf_image
-            .pixel(coords)
-          {
-            ui.label(format!("depth: {:.2}", color.x));
-          }
+          self.draw_tooltip_ui(ui, pos);
         });
       }
     }
@@ -380,6 +366,28 @@ impl RasterApp {
     }
 
     self.models = res;
+  }
+
+  pub fn draw_tooltip_ui(&self, ui: &mut egui::Ui, pos: egui::Pos2) {
+    let scale = self.tunable.super_sampling;
+    let coords = ((pos.x * scale) as i32, (pos.y * scale) as i32);
+    let render_result = self.render_result.as_ref().unwrap();
+    let image_pixel = render_result.image.pixel(coords);
+    let zbuf_pixel = render_result.zbuf_image.pixel(coords);
+
+    ui.label(format!("{},{}", coords.0, coords.1));
+
+    if let Some(color) = image_pixel {
+      ui.horizontal(|ui| {
+        let egui_color = egui::color::Rgba::from_rgb(color.x, color.y, color.z);
+        show_color(ui, egui_color, Vec2::new(8.0, 8.0));
+        ui.label(format!("{:.2},{:.2},{:.2}", color.x, color.y, color.z));
+      });
+    }
+
+    if let Some(color) = zbuf_pixel {
+      ui.label(format!("depth: {:.10}", color.x));
+    }
   }
 }
 

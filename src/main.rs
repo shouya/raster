@@ -7,7 +7,9 @@ use std::{
 
 use eframe::{
   self,
-  egui::{self, color_picker::show_color, CollapsingHeader, ComboBox, Vec2},
+  egui::{
+    self, color_picker::show_color, CollapsingHeader, ComboBox, Grid, Vec2,
+  },
   epi::{self, TextureAllocator},
   NativeOptions,
 };
@@ -279,51 +281,57 @@ impl RasterApp {
         focusable: true,
       });
       let resp = ui.add(image);
-      ui.label(format!("{:?}", self.render_result.as_ref().unwrap().metric));
-
-      use egui::PointerButton::*;
-      let d = resp.drag_delta();
-
-      const ROTATION_SPEED: f32 = 1.5;
-      const TRANSLATION_SPEED: f32 = 0.01;
-
-      if resp.dragged() {
-        if resp.dragged_by(Primary) {
-          let t = &self.tunable;
-          let rot_delta = Rotation::from_euler_angles(
-            d.y / size.1 * ROTATION_SPEED,
-            d.x / size.0 * ROTATION_SPEED,
-            0.0,
-          );
-          let rot_old =
-            Rotation::from_euler_angles(t.rot[0], t.rot[1], t.rot[2]);
-          let rot_new = (rot_delta * rot_old).euler_angles();
-          self.tunable.rot[0] = rot_new.0;
-          self.tunable.rot[1] = rot_new.1;
-          self.tunable.rot[2] = rot_new.2;
-          self.redraw = true;
-        }
-        if resp.dragged_by(Middle) {
-          self.tunable.trans[0] += d.x * TRANSLATION_SPEED;
-          self.tunable.trans[1] -= d.y * TRANSLATION_SPEED;
-          self.redraw = true;
-        }
-      }
-
-      let scroll_y = resp.ctx.input().scroll_delta.y;
-      if scroll_y != 0.0 {
-        self.tunable.trans[2] += scroll_y * TRANSLATION_SPEED;
-        self.redraw = true;
-      }
+      self.handle_interative_transform(&resp);
 
       let topleft = resp.rect.min;
       if let Some(mut pos) = resp.hover_pos() {
-        pos -= dbg!(topleft.to_vec2());
-        // pos.x -= spacing;
+        pos -= topleft.to_vec2();
         resp.on_hover_ui_at_pointer(|ui| {
           self.draw_tooltip_ui(ui, pos);
         });
       }
+    }
+  }
+
+  fn handle_interative_transform(&mut self, resp: &egui::Response) {
+    use egui::PointerButton::*;
+
+    let size = (self.texture_size.0 as f32, self.texture_size.1 as f32);
+    let d = resp.drag_delta();
+
+    const ROTATION_SPEED: f32 = 1.5;
+    const TRANSLATION_SPEED: f32 = 0.01;
+
+    if resp.dragged() {
+      // rotation
+      if resp.dragged_by(Primary) {
+        let t = &self.tunable;
+        let rot_delta = Rotation::from_euler_angles(
+          d.y / size.1 * ROTATION_SPEED,
+          d.x / size.0 * ROTATION_SPEED,
+          0.0,
+        );
+        let rot_old = Rotation::from_euler_angles(t.rot[0], t.rot[1], t.rot[2]);
+        let rot_new = (rot_delta * rot_old).euler_angles();
+        self.tunable.rot[0] = rot_new.0;
+        self.tunable.rot[1] = rot_new.1;
+        self.tunable.rot[2] = rot_new.2;
+        self.redraw = true;
+      }
+
+      // translation
+      if resp.dragged_by(Middle) {
+        self.tunable.trans[0] += d.x * TRANSLATION_SPEED;
+        self.tunable.trans[1] -= d.y * TRANSLATION_SPEED;
+        self.redraw = true;
+      }
+    }
+
+    // zooming
+    let scroll_y = resp.ctx.input().scroll_delta.y;
+    if scroll_y != 0.0 {
+      self.tunable.trans[2] += scroll_y * TRANSLATION_SPEED;
+      self.redraw = true;
     }
   }
 
@@ -389,6 +397,69 @@ impl RasterApp {
       ui.label(format!("depth: {:.10}", color.x));
     }
   }
+
+  pub fn draw_metrics(&self, ui: &mut egui::Ui) {
+    if self.render_result.is_none() {
+      return;
+    }
+    let metric = &self.render_result.as_ref().unwrap().metric;
+
+    Grid::new("metrics")
+      .num_columns(2)
+      .striped(true)
+      .show(ui, |ui| {
+        ui.label("Render time");
+        ui.label(format!(
+          "{:.4}s ({:.2}fps)",
+          metric.render_time,
+          1.0 / metric.render_time
+        ));
+        ui.end_row();
+
+        ui.label("Faces rendered");
+        ui.label(format!("{}", metric.faces_rendered));
+        ui.end_row();
+
+        let msg = format!(
+          "{}\n{}",
+          "Clipped: number of triangles after clipping",
+          "Sub-trig: number of upper+lower triangles"
+        );
+        ui.label("Triangles rendered (clipped, sub-trig)")
+          .on_hover_text(msg);
+        ui.label(format!(
+          "{}, ({}, {})",
+          metric.triangles_rendered,
+          metric.clipped_triangles_rendered,
+          metric.sub_triangles_rendered
+        ));
+        ui.end_row();
+
+        ui.label("Hidden faces removed");
+        ui.label(format!("{}", metric.hidden_face_removed));
+        ui.end_row();
+
+        ui.label("Lines drawn (horizontal)");
+        ui.label(format!(
+          "{} ({})",
+          metric.lines_drawn, metric.horizontal_lines_drawn
+        ));
+        ui.end_row();
+
+        ui.label("Vertices/pixels shaded");
+        ui.label(format!(
+          "{} / {}",
+          metric.vertices_shaded, metric.pixels_shaded
+        ));
+        ui.end_row();
+
+        ui.label("Pixels discarded")
+          .on_hover_text("Due to lower z-value");
+
+        ui.label(format!("{}", metric.pixels_discarded));
+        ui.end_row();
+      });
+  }
 }
 
 impl epi::App for RasterApp {
@@ -397,8 +468,13 @@ impl epi::App for RasterApp {
   }
 
   fn update(&mut self, ctx: &egui::CtxRef, frame: &mut epi::Frame) {
-    egui::SidePanel::left("tunable").show(ctx, |ui| {
-      self.draw_tunables(ui);
+    egui::SidePanel::left("misc").show(ctx, |ui| {
+      egui::TopBottomPanel::bottom("metrics").show_inside(ui, |ui| {
+        self.draw_metrics(ui);
+      });
+      egui::CentralPanel::default().show_inside(ui, |ui| {
+        self.draw_tunables(ui);
+      });
     });
 
     egui::CentralPanel::default().show(ctx, |ui| {

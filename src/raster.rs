@@ -1,4 +1,4 @@
-use std::{borrow::Cow, cmp::max, convert::TryInto};
+use std::{borrow::Cow, cmp::max, convert::TryInto, time::Instant};
 
 use approx::abs_diff_eq;
 use nalgebra::{Matrix4, Point3, Vector2, Vector3, Vector4};
@@ -627,6 +627,7 @@ pub struct RasterizerMetric {
   pub vertices_shaded: usize,
   pub pixels_shaded: usize,
   pub pixels_discarded: usize,
+  pub render_time: f32
 }
 
 pub struct Rasterizer {
@@ -666,6 +667,8 @@ impl Rasterizer {
   }
 
   pub fn rasterize(&mut self, scene: &Scene) {
+    let now = Instant::now();
+
     for mesh in scene.iter_meshes() {
       for face in mesh.faces() {
         let mut face: Face<Pt> = face.as_ref().convert();
@@ -684,6 +687,8 @@ impl Rasterizer {
         self.rasterize_face(&mut face, &context, shader);
       }
     }
+
+    self.metric.render_time = now.elapsed().as_secs_f32();
   }
 
   pub fn rasterize_face(

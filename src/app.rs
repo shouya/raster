@@ -11,16 +11,17 @@ use eframe::{
     self, color_picker::show_color, CollapsingHeader, ComboBox, Grid, Vec2,
   },
   epi::{self, TextureAllocator},
-  NativeOptions,
 };
 use nalgebra::{Point3, Rotation, Translation3};
-use raster::{
+
+use crate::raster::{
   Camera, Color, Rasterizer, RasterizerMetric, RasterizerMode, Scene, COLOR,
 };
-use shader::{Light, ShaderOptions};
-use wavefront::MeshObject;
+use crate::shader::{Light, ShaderOptions};
+use crate::wavefront::MeshObject;
 
 use crate::{raster::Image, shader::TextureFilterMode};
+use crate::wavefront;
 
 pub struct RenderResult {
   pub image: Image<Color>,
@@ -533,15 +534,15 @@ pub fn sample_scene<'a>(tun: &'a Tunable, cache: &'a mut SceneCache) -> Scene<'a
     Rotation::from_euler_angles(tun.rot[0], tun.rot[1], tun.rot[2])
       .to_homogeneous();
 
-  let mesh_obj = cache.get_mesh_obj(&tun.model_file);
-  scene.set_texture_stash(&mesh_obj.textures);
-  for mesh in mesh_obj.meshes.clone() {
-    let mesh = mesh
-      .transformed(rotation)
-      .transformed(translation)
-      .double_faced(tun.double_faced);
-    scene.add_mesh(mesh);
-  }
+  // let mesh_obj = cache.get_mesh_obj(&tun.model_file);
+  // scene.set_texture_stash(&mesh_obj.textures);
+  // for mesh in mesh_obj.meshes.clone() {
+  //   let mesh = mesh
+  //     .transformed(rotation)
+  //     .transformed(translation)
+  //     .double_faced(tun.double_faced);
+  //   scene.add_mesh(mesh);
+  // }
 
   scene.add_light(Light::new(
     Point3::new(5.0, 10.0, 5.0),

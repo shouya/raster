@@ -14,9 +14,7 @@ use eframe::{
   NativeOptions,
 };
 use nalgebra::{Point3, Rotation, Translation3};
-use raster::{
-  Camera, Color, Rasterizer, RasterizerMetric, RasterizerMode, Scene, COLOR,
-};
+use raster::{COLOR, Camera, Color, Rasterizer, RasterizerMetric, RasterizerMode, Scene, WorldMesh};
 use shader::{Light, ShaderOptions};
 use wavefront::MeshObject;
 
@@ -552,8 +550,8 @@ fn sample_scene<'a>(tun: &'a Tunable, cache: &'a mut SceneCache) -> Scene<'a> {
 
   let mesh_obj = cache.get_mesh_obj(&tun.model_file);
   scene.set_texture_stash(&mesh_obj.textures);
-  for mesh in mesh_obj.meshes.clone() {
-    let mesh = mesh
+  for mesh in mesh_obj.meshes.iter() {
+    let mesh = WorldMesh::from(mesh)
       .transformed(rotation)
       .transformed(translation)
       .double_faced(tun.double_faced);

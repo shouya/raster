@@ -4,7 +4,7 @@ use anyhow::{ensure, Result};
 use nalgebra::{Point3, Vector2, Vector3};
 
 use crate::{
-  raster::{Color, Face, Image, IndexedPolyVert, Mesh, COLOR},
+  raster::{Color, Face, Image, IndexedPolyVert, COLOR},
   shader::{SimpleMaterial, TextureStash},
 };
 
@@ -83,6 +83,15 @@ impl Mtl {
   }
 }
 
+#[derive(Clone, Default, Debug)]
+pub struct Mesh {
+  pub material: Option<SimpleMaterial>,
+  pub vertices: Vec<Point3<f32>>,
+  pub vertex_normals: Vec<Vector3<f32>>,
+  pub texture_coords: Vec<Vector2<f32>>,
+  pub faces: Vec<Face<IndexedPolyVert>>,
+}
+
 struct Obj {
   pub mtl: Mtl,
   pub objs: Vec<Mesh>,
@@ -104,7 +113,7 @@ impl Obj {
 
   pub fn parse(s: &str, rel_path: &Path) -> Result<Self> {
     let mut obj = Obj::new();
-    let mut curr_mesh = Mesh::new();
+    let mut curr_mesh = Mesh::default();
 
     for line in s.lines() {
       if line.starts_with("#") {
@@ -126,7 +135,7 @@ impl Obj {
         }
         ["usemtl", m] => {
           // TODO: change to a less clumsy way
-          if curr_mesh.num_faces() > 1 {
+          if curr_mesh.faces.len() > 1 {
             obj.objs.push(curr_mesh.clone());
             curr_mesh.faces = vec![];
           }
@@ -140,7 +149,7 @@ impl Obj {
     }
 
     // TODO: change to a less clumsy way
-    if curr_mesh.num_faces() > 1 {
+    if curr_mesh.faces.len() > 1 {
       obj.objs.push(curr_mesh);
     }
 

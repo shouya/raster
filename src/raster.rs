@@ -10,6 +10,7 @@ use crate::{
     Light, Shader, ShaderContext, ShaderOptions, SimpleMaterial, TextureStash,
   },
   util::f32_cmp,
+  wavefront::Mesh,
 };
 
 pub type Color = Vector4<f32>;
@@ -409,32 +410,30 @@ pub struct PolyVert<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Mesh {
-  pub material: Option<SimpleMaterial>,
+pub struct WorldMesh<'a> {
   pub transform: Matrix4<f32>,
-  pub vertices: Vec<Point3<f32>>,
-  pub vertex_normals: Vec<Vector3<f32>>,
-  pub texture_coords: Vec<Vector2<f32>>,
-  pub faces: Vec<Face<IndexedPolyVert>>,
   pub double_faced: bool,
+  pub mesh: Cow<'a, Mesh>,
 }
 
-impl Mesh {
+impl<'a> From<&'a Mesh> for WorldMesh<'a> {
+  fn from(mesh: &'a Mesh) -> Self {
+    Self {
+      transform: Matrix4::identity(),
+      mesh: Cow::Borrowed(mesh),
+      double_faced: false,
+    }
+  }
+}
+
+impl<'a> WorldMesh<'a> {
   #[allow(unused)]
   pub fn new() -> Self {
     Self {
       transform: Matrix4::identity(),
-      vertices: Default::default(),
-      vertex_normals: Default::default(),
-      texture_coords: Default::default(),
-      faces: Vec::new(),
-      material: None,
+      mesh: Default::default(),
       double_faced: false,
     }
-  }
-
-  pub fn num_faces(&self) -> usize {
-    self.faces.len()
   }
 
   pub fn double_faced(mut self, double_faced: bool) -> Self {
@@ -443,15 +442,16 @@ impl Mesh {
   }
 
   pub fn faces(&self) -> impl Iterator<Item = Face<PolyVert<'_>>> {
-    self.faces.iter().map(move |f| self.get_face(f))
+    self.mesh.faces.iter().map(move |f| self.get_face(f))
   }
 
   pub fn get_face(&self, face: &Face<IndexedPolyVert>) -> Face<PolyVert<'_>> {
     let mut res = Face::new(self.double_faced);
+    let mesh = &self.mesh;
     for vert in face.vertices() {
-      let vertex = &self.vertices[vert.vertex_index];
-      let texture_coords = vert.texture_index.map(|i| &self.texture_coords[i]);
-      let normal = vert.normal_index.map(|i| &self.vertex_normals[i]);
+      let vertex = &mesh.vertices[vert.vertex_index];
+      let texture_coords = vert.texture_index.map(|i| &mesh.texture_coords[i]);
+      let normal = vert.normal_index.map(|i| &mesh.vertex_normals[i]);
 
       res.add_vert(PolyVert {
         vertex,
@@ -469,6 +469,7 @@ impl Mesh {
 
   pub fn shader(&self) -> &dyn Shader {
     self
+      .mesh
       .material
       .as_ref()
       .unwrap_or_else(|| SimpleMaterial::plaster())
@@ -479,7 +480,7 @@ pub struct Scene<'a> {
   textures: Cow<'a, TextureStash>,
   camera: Camera,
   lights: Vec<Light>,
-  meshes: Vec<Mesh>,
+  meshes: Vec<WorldMesh<'a>>,
 }
 
 impl<'a> Scene<'a> {
@@ -504,16 +505,16 @@ impl<'a> Scene<'a> {
     self.lights.push(light);
   }
 
-  pub fn add_mesh(&mut self, mesh: Mesh) {
+  pub fn add_mesh(&mut self, mesh: WorldMesh<'a>) {
     self.meshes.push(mesh);
   }
 
   #[allow(unused)]
-  pub fn add_meshes(&mut self, mesh: &[Mesh]) {
+  pub fn add_meshes(&mut self, mesh: &[WorldMesh<'a>]) {
     self.meshes.extend_from_slice(mesh);
   }
 
-  pub fn iter_meshes(&self) -> impl Iterator<Item = &Mesh> + '_ {
+  pub fn iter_meshes(&self) -> impl Iterator<Item = &WorldMesh> + '_ {
     self.meshes.iter()
   }
 
@@ -627,7 +628,7 @@ pub struct RasterizerMetric {
   pub vertices_shaded: usize,
   pub pixels_shaded: usize,
   pub pixels_discarded: usize,
-  pub render_time: f32
+  pub render_time: f32,
 }
 
 pub struct Rasterizer {
@@ -1060,7 +1061,7 @@ impl Rasterizer {
   fn shader_context<'a>(
     &self,
     scene: &'a Scene,
-    mesh: &Mesh,
+    mesh: &WorldMesh,
   ) -> ShaderContext<'a> {
     ShaderContext {
       textures: scene.texture_stash(),

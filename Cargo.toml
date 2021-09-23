@@ -12,5 +12,8 @@ lazy_static = "1.4.0"
 nalgebra = "0.29.0"
 smallvec = "1.6.1"
 
+[profile.dev]
+opt-level = 3
+
 [profile.release]
 debug = true

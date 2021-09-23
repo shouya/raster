@@ -135,7 +135,7 @@ impl Obj {
         }
         ["usemtl", m] => {
           // TODO: change to a less clumsy way
-          if curr_mesh.faces.len() > 1 {
+          if curr_mesh.faces.len() > 0 {
             obj.objs.push(curr_mesh.clone());
             curr_mesh.faces = vec![];
           }
@@ -149,7 +149,7 @@ impl Obj {
     }
 
     // TODO: change to a less clumsy way
-    if curr_mesh.faces.len() > 1 {
+    if curr_mesh.faces.len() > 0 {
       obj.objs.push(curr_mesh);
     }
 

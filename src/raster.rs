@@ -10,7 +10,7 @@ use crate::{
     Light, Shader, ShaderContext, ShaderOptions, SimpleMaterial, TextureStash,
   },
   util::f32_cmp,
-  wavefront::Mesh,
+  wavefront::{Mesh, MeshObject},
 };
 
 pub type Color = Vector4<f32>;
@@ -209,6 +209,10 @@ impl Camera {
   pub fn transformd(&mut self, trans: &Matrix4<f32>) {
     self.inv_transform *= trans.pseudo_inverse(0.0001).unwrap();
   }
+
+  pub fn project_point(&self, pt: &Point3<f32>) -> Point3<f32> {
+    self.matrix().transform_point(pt)
+  }
 }
 
 #[derive(Debug, Clone)]
@@ -272,6 +276,246 @@ impl<'a, T> Trig<T> {
       vertices: self.vertices.map(|x| f(x)),
     }
   }
+
+  pub fn map_in_place<F>(&mut self, f: F)
+  where
+    F: Fn(&mut T) -> (),
+  {
+    self.vertices.iter_mut().for_each(f)
+  }
+
+  // the caller needs to ensure self.vert.to_clip are of screen coords
+  pub fn to_pixels(self) -> impl Iterator<Item = T>
+  where
+    T: ToClipSpace + Clone + Copy + Lerp,
+  {
+    let [upper, lower] = self.horizontally_split().map(|trig| trig.into_iter());
+    let upper = upper.flat_map(|trig| trig.upper_trig_to_horizontal_lines());
+    let lower = lower.flat_map(|trig| trig.lower_trig_to_horizontal_lines());
+    let vertical_bounds = upper .chain(lower);
+
+    vertical_bounds.flat_map(Self::to_horizontal_pixels)
+  }
+
+  fn to_horizontal_pixels(x_bounds: (T, T)) -> impl Iterator<Item = T>
+  where
+    T: ToClipSpace + Clone + Copy + Lerp,
+  {
+    let x1 = x_bounds.0.to_clip().x;
+    let x2 = x_bounds.1.to_clip().x;
+    let w = (x1 - x2).abs() as usize;
+    lerp_closed_iter(x_bounds.0, x_bounds.1, w)
+  }
+
+  // the caller needs to ensure self is an upper trig and
+  // self.vert.to_clip are of screen coordinates
+  pub fn upper_trig_to_horizontal_lines(
+    self,
+  ) -> impl Iterator<Item = (T, T)>
+  where
+    T: ToClipSpace + Clone + Copy + Lerp,
+  {
+    let top = self.a();
+    let bottom_left = self.b();
+    let bottom_right = self.c();
+
+    let top_y = top.to_clip().y;
+    let bottom_y = bottom_left.to_clip().y;
+    let h = (top_y - bottom_y).abs() as usize;
+
+    let left_pts_iter = lerp_closed_iter(*top, *bottom_left, h);
+    let right_pts_iter = lerp_closed_iter(*top, *bottom_right, h);
+
+    left_pts_iter.zip(right_pts_iter)
+  }
+
+  pub fn lower_trig_to_horizontal_lines(
+    self,
+  ) -> impl Iterator<Item = (T, T)>
+  where
+    T: ToClipSpace + Clone + Copy + Lerp,
+  {
+    let top_left = self.a();
+    let top_right = self.b();
+    let bottom = self.c();
+
+    let top_y = top_left.to_clip().y;
+    let bottom_y = bottom.to_clip().y;
+    let h = (top_y - bottom_y).abs() as usize;
+
+    let left_pts_iter = lerp_closed_iter(*top_left, *bottom, h);
+    let right_pts_iter = lerp_closed_iter(*top_right, *bottom, h);
+
+    left_pts_iter.zip(right_pts_iter)
+  }
+
+  // returns two triangles whose vertices are ordered by y values
+  pub fn horizontally_split(mut self) -> [Option<Trig<T>>; 2]
+  where
+    T: ToClipSpace + Clone + Copy + Lerp,
+  {
+    const EPS: f32 = 0.0001;
+    self
+      .vertices
+      .sort_unstable_by(|p1, p2| f32_cmp(&p1.to_clip().y, &p2.to_clip().y));
+    let ay = self.a().to_clip().y;
+    let by = self.b().to_clip().y;
+    let cy = self.c().to_clip().y;
+
+    if abs_diff_eq!(ay, cy, epsilon = EPS) {
+      // a flat line
+      return [Some(self), None];
+    }
+
+    if abs_diff_eq!(ay, by, epsilon = EPS) {
+      // a lower triangle
+      return [None, Some(self)];
+    }
+
+    if abs_diff_eq!(by, cy, epsilon = EPS) {
+      // a upper triangle
+      return [Some(self), None];
+    }
+
+    // a normal triangle that we need to split
+    let t = (by - ay) / (cy - ay);
+    let ptl = lerp(t, self.a(), self.c());
+    let ptr = *self.b();
+
+    let upper_trig = [*self.a(), ptl, ptr].into();
+    let lower_trig = [ptl, ptr, *self.c()].into();
+
+    [Some(upper_trig), Some(lower_trig)]
+  }
+
+  pub fn clip(self) -> SmallVec<[Trig<T>; 2]>
+  where
+    T: ToClipSpace + Lerp + Clone + Copy,
+  {
+    if self.fully_visible() {
+      return smallvec![self];
+    }
+
+    let init: SmallVec<[&Trig<T>; 2]> = smallvec![&self];
+
+    init
+      .into_iter()
+      .flat_map(|t| t.clip_component(|p| p.to_clip().z, -1.0, -1.0))
+      .flat_map(|t| t.clip_component(|p| p.to_clip().z, 1.0, 1.0))
+      .flat_map(|t| t.clip_component(|p| p.to_clip().x, -1.0, -1.0))
+      .flat_map(|t| t.clip_component(|p| p.to_clip().x, 1.0, 1.0))
+      .flat_map(|t| t.clip_component(|p| p.to_clip().y, -1.0, -1.0))
+      .flat_map(|t| t.clip_component(|p| p.to_clip().y, 1.0, 1.0))
+      .collect()
+  }
+
+  fn clip_component<F>(
+    &self,
+    get_comp: F,
+    lim: f32,
+    sign: f32,
+  ) -> SmallVec<[Trig<T>; 2]>
+  where
+    T: ToClipSpace + Lerp + Clone + Copy,
+    F: Fn(&T) -> f32,
+  {
+    let (va, vb, vc) = (self.a(), self.b(), self.c());
+    let v: [f32; 3] = self.as_ref().map(get_comp).vertices();
+    let (a, b, c) = (v[0], v[1], v[2]);
+
+    // redefine lt, gt, le, ge operator based on the sign
+    let lt = |x: f32, y: f32| x * sign < y * sign;
+    let ge = |x: f32, y: f32| x * sign >= y * sign;
+    let in_lim = |x: f32| lt(x, lim);
+    let out_lim = |x: f32| ge(x, lim);
+
+    // case 1: all vertex within range
+    if in_lim(a) && in_lim(b) && in_lim(c) {
+      return smallvec![self.clone()];
+    }
+
+    // case 2: all vertex out of range
+    if out_lim(a) && out_lim(b) && out_lim(c) {
+      // within the range; draw without clipping
+      return smallvec![];
+    }
+
+    // case 3: two vertices out of range
+    if in_lim(a) && out_lim(b) && out_lim(c) {
+      let new_vb = lerp((lim - a) / (b - a), va, vb);
+      let new_vc = lerp((lim - a) / (c - a), va, vc);
+      return smallvec![[*va, new_vb, new_vc].into()];
+    }
+    if out_lim(a) && in_lim(b) && out_lim(c) {
+      let new_va = lerp((lim - b) / (a - b), vb, va);
+      let new_vc = lerp((lim - b) / (c - b), vb, vc);
+      return smallvec![[new_va, *vb, new_vc].into()];
+    }
+    if out_lim(a) && out_lim(b) && in_lim(c) {
+      let new_va = lerp((lim - c) / (a - c), vc, va);
+      let new_vb = lerp((lim - c) / (b - c), vc, vb);
+      return smallvec![[new_va, new_vb, *vc].into()];
+    }
+
+    // case 4: one vertex out of range
+    if out_lim(a) && in_lim(b) && in_lim(c) {
+      let new_vb = lerp((lim - a) / (b - a), va, vb);
+      let new_vc = lerp((lim - a) / (c - a), va, vc);
+      return smallvec![
+        [*vb, *vc, new_vb].into(),
+        [*vc, new_vc, new_vb].into()
+      ];
+    }
+    if in_lim(a) && out_lim(b) && in_lim(c) {
+      let new_va = lerp((lim - b) / (a - b), vb, va);
+      let new_vc = lerp((lim - b) / (c - b), vb, vc);
+      return smallvec![
+        [*va, *vc, new_va].into(),
+        [*vc, new_va, new_vc].into()
+      ];
+    }
+    if in_lim(a) && in_lim(b) && out_lim(c) {
+      let new_va = lerp((lim - c) / (a - c), vc, va);
+      let new_vb = lerp((lim - c) / (b - c), vc, vb);
+      return smallvec![
+        [*va, *vb, new_va].into(),
+        [*vb, new_va, new_vb].into()
+      ];
+    }
+
+    unreachable!()
+  }
+
+  pub fn fully_visible(&self) -> bool
+  where
+    T: ToClipSpace,
+  {
+    let comp_in_range = |v| (0.0..=1.0).contains(&v);
+    let pt_in_range = |p: &Point3<f32>| {
+      comp_in_range(p.x) && comp_in_range(p.y) && comp_in_range(p.z)
+    };
+
+    pt_in_range(self.a().to_clip())
+      && pt_in_range(self.b().to_clip())
+      && pt_in_range(self.c().to_clip())
+  }
+}
+
+/// Types that represents a point in clip space
+pub trait ToClipSpace {
+  fn to_clip(&self) -> &Point3<f32>;
+}
+
+impl ToClipSpace for Pt {
+  fn to_clip(&self) -> &Point3<f32> {
+    &self.clip_pos
+  }
+}
+
+impl ToClipSpace for Point3<f32> {
+  fn to_clip(&self) -> &Point3<f32> {
+    &self
+  }
 }
 
 #[derive(Debug, Clone)]
@@ -331,10 +575,7 @@ impl<T> Face<T> {
   where
     S: From<T>,
   {
-    Face {
-      vertices: self.vertices.into_iter().map(|x| x.into()).collect(),
-      double_faced: self.double_faced,
-    }
+    self.map(Into::into)
   }
 
   pub fn edges(&self) -> impl Iterator<Item = (T, T)> + '_
@@ -354,6 +595,16 @@ impl<T> Face<T> {
     F: Fn(&mut T) -> (),
   {
     self.vertices.iter_mut().for_each(f)
+  }
+
+  pub fn map<F, S>(self, f: F) -> Face<S>
+  where
+    F: Fn(T) -> S,
+  {
+    Face {
+      vertices: self.vertices.into_iter().map(f).collect(),
+      double_faced: self.double_faced,
+    }
   }
 }
 
@@ -402,7 +653,7 @@ impl IndexedPolyVert {
   }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct PolyVert<'a> {
   pub vertex: &'a Point3<f32>,
   pub texture_coords: Option<&'a Vector2<f32>>,
@@ -413,6 +664,7 @@ pub struct PolyVert<'a> {
 pub struct WorldMesh<'a> {
   pub transform: Matrix4<f32>,
   pub double_faced: bool,
+  pub casts_shadow: bool,
   pub mesh: Cow<'a, Mesh>,
 }
 
@@ -422,6 +674,7 @@ impl<'a> From<&'a Mesh> for WorldMesh<'a> {
       transform: Matrix4::identity(),
       mesh: Cow::Borrowed(mesh),
       double_faced: false,
+      casts_shadow: false,
     }
   }
 }
@@ -433,6 +686,7 @@ impl<'a> WorldMesh<'a> {
       transform: Matrix4::identity(),
       mesh: Default::default(),
       double_faced: false,
+      casts_shadow: false,
     }
   }
 
@@ -441,8 +695,26 @@ impl<'a> WorldMesh<'a> {
     self
   }
 
-  pub fn faces(&self) -> impl Iterator<Item = Face<PolyVert<'_>>> {
+  pub fn casts_shadow(mut self, casts_shadow: bool) -> Self {
+    self.casts_shadow = casts_shadow;
+    self
+  }
+
+  fn mesh_faces(&self) -> impl Iterator<Item = Face<PolyVert<'_>>> {
     self.mesh.faces.iter().map(move |f| self.get_face(f))
+  }
+
+  // Return faces in world world coordinates
+  pub fn faces(&self) -> impl Iterator<Item = Face<Pt>> + '_ {
+    // TODO: each vertex is transformed d(v) times which is not
+    // very efficient. Fix it.
+    self.mesh_faces().map(move |face| {
+      face.map(|vert| {
+        let mut pt = Pt::from(&vert);
+        pt.world_pos = self.transform.transform_point(&pt.clip_pos);
+        pt
+      })
+    })
   }
 
   pub fn get_face(&self, face: &Face<IndexedPolyVert>) -> Face<PolyVert<'_>> {
@@ -631,6 +903,85 @@ pub struct RasterizerMetric {
   pub render_time: f32,
 }
 
+pub struct ShadowRasterizer<'a> {
+  size: (f32, f32),
+  light: &'a Light,
+  camera: &'a Camera,
+  zbuffer: &'a Image<f32>,
+  stencil_buffer: Image<i32>,
+  // Coordinates are all in clip space
+  shadow_volume: WorldMesh<'a>,
+  shadow_distance: f32,
+}
+
+impl<'a> ShadowRasterizer<'a> {
+  pub fn new(
+    light: &'a Light,
+    camera: &'a Camera,
+    zbuffer: &'a Image<f32>,
+  ) -> Self {
+    let size = zbuffer.dimension;
+    let stencil_buffer = Image::new_filled(size, &0);
+    let shadow_volume = WorldMesh::new();
+    let shadow_distance = 10000.0;
+
+    let size = (size.0 as f32, size.1 as f32);
+
+    ShadowRasterizer {
+      size,
+      light,
+      camera,
+      zbuffer,
+      stencil_buffer,
+      shadow_volume,
+      shadow_distance,
+    }
+  }
+
+  pub fn add_face(&mut self, face: &Face<Pt>) {
+    for (p1, p2) in face.edges() {
+      let p1_far = self.light.project(&p1.world_pos, self.shadow_distance);
+      let p2_far = self.light.project(&p2.world_pos, self.shadow_distance);
+
+      let face: [Point3<f32>; 4] = [
+        self.camera.project_point(&p1.world_pos),
+        self.camera.project_point(&p2.world_pos),
+        self.camera.project_point(&p2_far),
+        self.camera.project_point(&p1_far),
+      ];
+      self.shadow_volume.mesh.to_mut().add_simple_face(&face);
+    }
+  }
+
+  pub fn add_world_mesh(&mut self, mesh: &WorldMesh) {
+    for face in mesh.faces() {
+      self.add_face(&face);
+    }
+  }
+
+  pub fn render_stencil(&mut self) {
+    for face in self.shadow_volume.faces() {
+      for trig in face.triangulate() {
+        let trig = trig.map(|trig| trig.clip_pos);
+        self.fill_triangle(trig)
+      }
+    }
+  }
+
+  fn fill_triangle(&self, trig: Trig<Point3<f32>>) {
+    for mut trig in trig.clip() {
+      trig.map_in_place(|pt| self.to_screen_pt(pt));
+      // TODO
+    }
+  }
+
+  fn to_screen_pt(&self, clip_pt: &mut Point3<f32>) {
+    let (w, h) = self.size;
+    clip_pt.x = 0.5 * (clip_pt.x + 1.0) * w;
+    clip_pt.y = 0.5 * (1.0 - clip_pt.y) * h;
+  }
+}
+
 pub struct Rasterizer {
   size: (f32, f32),
   mode: RasterizerMode,
@@ -671,8 +1022,7 @@ impl Rasterizer {
     let now = Instant::now();
 
     for mesh in scene.iter_meshes() {
-      for face in mesh.faces() {
-        let mut face: Face<Pt> = face.as_ref().convert();
+      for mut face in mesh.faces() {
         let context = self.shader_context(scene, mesh);
         let shader = mesh.shader();
 
@@ -703,12 +1053,12 @@ impl Rasterizer {
     match self.mode {
       Shaded => {
         for trig in face.triangulate() {
-          self.fill_triangle(&trig, &context, shader);
+          self.fill_triangle(trig, &context, shader);
         }
       }
       Clipped => {
         for trig in face.triangulate() {
-          self.draw_triangle_clipped(&trig, &context, shader);
+          self.draw_triangle_clipped(trig, &context, shader);
         }
       }
       Wireframe => {
@@ -726,110 +1076,8 @@ impl Rasterizer {
       && in_range(trig.a().clip_pos.z)
   }
 
-  fn clip_triangle(&self, trig: &Trig<Pt>) -> SmallVec<[Trig<Pt>; 2]> {
-    if self.contains_triangle(trig) {
-      return smallvec![trig.clone()];
-    }
-
-    let init: SmallVec<[&Trig<Pt>; 2]> = smallvec![trig];
-    init
-      .into_iter()
-      .flat_map(|t| {
-        self.clip_triangle_component(&t, |p| p.clip_pos.z, -1.0, -1.0)
-      })
-      .flat_map(|t| {
-        self.clip_triangle_component(&t, |p| p.clip_pos.z, 1.0, 1.0)
-      })
-      .flat_map(|t| {
-        self.clip_triangle_component(&t, |p| p.clip_pos.x, -1.0, -1.0)
-      })
-      .flat_map(|t| {
-        self.clip_triangle_component(&t, |p| p.clip_pos.x, 1.0, 1.0)
-      })
-      .flat_map(|t| {
-        self.clip_triangle_component(&t, |p| p.clip_pos.y, -1.0, -1.0)
-      })
-      .flat_map(|t| {
-        self.clip_triangle_component(&t, |p| p.clip_pos.y, 1.0, 1.0)
-      })
-      .collect()
-  }
-
-  fn clip_triangle_component<F>(
-    &self,
-    trig: &Trig<Pt>,
-    get_comp: F,
-    lim: f32,
-    sign: f32,
-  ) -> SmallVec<[Trig<Pt>; 2]>
-  where
-    F: Fn(&Pt) -> f32,
-  {
-    let (va, vb, vc) = (trig.a(), trig.b(), trig.c());
-    let v: [f32; 3] = trig.as_ref().map(get_comp).vertices();
-    let (a, b, c) = (v[0], v[1], v[2]);
-
-    // redefine lt, gt, le, ge operator based on the sign
-    let lt = |x: f32, y: f32| x * sign < y * sign;
-    let ge = |x: f32, y: f32| x * sign >= y * sign;
-    let in_lim = |x: f32| lt(x, lim);
-    let out_lim = |x: f32| ge(x, lim);
-
-    // case 1: all vertex within range
-    if in_lim(a) && in_lim(b) && in_lim(c) {
-      return smallvec![trig.clone()];
-    }
-
-    // case 2: all vertex out of range
-    if out_lim(a) && out_lim(b) && out_lim(c) {
-      // within the range; draw without clipping
-      return smallvec![];
-    }
-
-    // case 3: two vertices out of range
-    if in_lim(a) && out_lim(b) && out_lim(c) {
-      let new_vb = lerp((lim - a) / (b - a), va, vb);
-      let new_vc = lerp((lim - a) / (c - a), va, vc);
-      return smallvec![[*va, new_vb, new_vc].into()];
-    }
-    if out_lim(a) && in_lim(b) && out_lim(c) {
-      let new_va = lerp((lim - b) / (a - b), vb, va);
-      let new_vc = lerp((lim - b) / (c - b), vb, vc);
-      return smallvec![[new_va, *vb, new_vc].into()];
-    }
-    if out_lim(a) && out_lim(b) && in_lim(c) {
-      let new_va = lerp((lim - c) / (a - c), vc, va);
-      let new_vb = lerp((lim - c) / (b - c), vc, vb);
-      return smallvec![[new_va, new_vb, *vc].into()];
-    }
-
-    // case 4: one vertex out of range
-    if out_lim(a) && in_lim(b) && in_lim(c) {
-      let new_vb = lerp((lim - a) / (b - a), va, vb);
-      let new_vc = lerp((lim - a) / (c - a), va, vc);
-      return smallvec![
-        [*vb, *vc, new_vb].into(),
-        [*vc, new_vc, new_vb].into()
-      ];
-    }
-    if in_lim(a) && out_lim(b) && in_lim(c) {
-      let new_va = lerp((lim - b) / (a - b), vb, va);
-      let new_vc = lerp((lim - b) / (c - b), vb, vc);
-      return smallvec![
-        [*va, *vc, new_va].into(),
-        [*vc, new_va, new_vc].into()
-      ];
-    }
-    if in_lim(a) && in_lim(b) && out_lim(c) {
-      let new_va = lerp((lim - c) / (a - c), vc, va);
-      let new_vb = lerp((lim - c) / (b - c), vc, vb);
-      return smallvec![
-        [*va, *vb, new_va].into(),
-        [*vb, new_va, new_vb].into()
-      ];
-    }
-
-    unreachable!()
+  fn clip_triangle(&self, trig: Trig<Pt>) -> SmallVec<[Trig<Pt>; 2]> {
+    trig.clip()
   }
 
   // return false if the line is off-view and should be skipped
@@ -1008,7 +1256,7 @@ impl Rasterizer {
     let dx = p2x - p1x;
     let dy = p2y - p1y;
     let n = max(dx.abs(), dy.abs());
-    for pt in lerp_closed_iter(&p1, &p2, n as usize) {
+    for pt in lerp_closed_iter(p1, p2, n as usize) {
       self.draw_pixel(pt, context, shader);
     }
   }
@@ -1028,8 +1276,8 @@ impl Rasterizer {
     let bottom_y = self.to_y_coord(bottom_left.clip_y());
     let h = (top_y - bottom_y).abs() as usize;
 
-    let left_pts_iter = lerp_closed_iter(&top, &bottom_left, h);
-    let right_pts_iter = lerp_closed_iter(&top, &bottom_right, h);
+    let left_pts_iter = lerp_closed_iter(top, bottom_left, h);
+    let right_pts_iter = lerp_closed_iter(top, bottom_right, h);
 
     for (l, r) in left_pts_iter.zip(right_pts_iter) {
       self.draw_horizontal_line(l, r, context, shader)
@@ -1050,8 +1298,8 @@ impl Rasterizer {
     let bottom_y = self.to_y_coord(bottom.clip_y());
     let h = (top_y - bottom_y).abs() as usize;
     // non-zero h
-    let left_pts_iter = lerp_closed_iter(&top_left, &bottom, h);
-    let right_pts_iter = lerp_closed_iter(&top_right, &bottom, h);
+    let left_pts_iter = lerp_closed_iter(top_left, bottom, h);
+    let right_pts_iter = lerp_closed_iter(top_right, bottom, h);
 
     for (l, r) in left_pts_iter.zip(right_pts_iter) {
       self.draw_horizontal_line(l, r, context, shader)
@@ -1074,11 +1322,11 @@ impl Rasterizer {
 
   fn draw_triangle_clipped(
     &mut self,
-    trig: &Trig<Pt>,
+    trig: Trig<Pt>,
     context: &ShaderContext,
     shader: &dyn Shader,
   ) {
-    for trig in self.clip_triangle(&trig) {
+    for trig in self.clip_triangle(trig) {
       let pts: Vec<_> = trig.vertices().into();
       self.draw_line(pts[0], pts[1], &context, shader);
       self.draw_line(pts[1], pts[2], &context, shader);
@@ -1088,12 +1336,12 @@ impl Rasterizer {
 
   fn fill_triangle(
     &mut self,
-    trig: &Trig<Pt>,
+    trig: Trig<Pt>,
     context: &ShaderContext,
     shader: &dyn Shader,
   ) {
     self.metric.triangles_rendered += 1;
-    for trig in self.clip_triangle(&trig) {
+    for trig in self.clip_triangle(trig) {
       self.metric.clipped_triangles_rendered += 1;
       let mut pts: Vec<_> = trig.vertices().into();
 
@@ -1156,7 +1404,7 @@ impl Rasterizer {
     let x1 = self.to_x_coord(p1.clip_x());
     let x2 = self.to_x_coord(p2.clip_x());
     let w = (x1 - x2).abs() as usize;
-    for p in lerp_closed_iter(&p1, &p2, w) {
+    for p in lerp_closed_iter(p1, p2, w) {
       self.draw_pixel(p, context, shader);
     }
   }

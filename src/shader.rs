@@ -48,6 +48,11 @@ impl Light {
   pub fn color(&self) -> &Color {
     &self.color
   }
+
+  pub fn project(&self, pt: &Point3<f32>, distance: f32) -> Point3<f32> {
+    let dir = (pt - self.pos).normalize();
+    pt + dir * distance
+  }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -90,7 +95,6 @@ impl<'a> ShaderContext<'a> {
 
 pub trait Shader {
   fn vertex(&self, context: &ShaderContext, pt: &mut Pt) {
-    pt.world_pos = context.model.transform_point(&pt.clip_pos);
     pt.clip_pos = context.camera.transform_point(&pt.world_pos);
 
     let normal = context.model.transform_vector(&pt.normal);

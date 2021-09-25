@@ -56,15 +56,15 @@ where
   from.lerp(to, t)
 }
 
-struct LerpIter<'a, T> {
-  from: &'a T,
-  to: &'a T,
-  curr: usize,
-  max: usize,
-  count: usize,
+struct LerpIter<T> {
+  from: T,
+  to: T,
+  curr: f32,
+  max: f32,
+  count: f32,
 }
 
-impl<'a, T> Iterator for LerpIter<'a, T>
+impl<T> Iterator for LerpIter<T>
 where
   T: Lerp,
 {
@@ -73,46 +73,28 @@ where
     if self.curr > self.max {
       return None;
     }
-    let t = self.curr as f32 / self.count as f32;
-    let v = lerp(t, self.from, self.to);
-    self.curr += 1;
+    let t = self.curr / self.count;
+    let v = lerp(t, &self.from, &self.to);
+    self.curr += 1.0;
     Some(v)
   }
 }
 
-// will not actually reach "to"
-#[allow(unused)]
-pub fn lerp_iter<'a, T>(
-  from: &'a T,
-  to: &'a T,
+// includes both ends
+pub fn lerp_closed_iter<T>(
+  from: T,
+  to: T,
   count: usize,
-) -> impl Iterator<Item = T> + 'a
+) -> impl Iterator<Item = T>
 where
   T: Lerp,
 {
   LerpIter {
     from,
     to,
-    count,
-    max: count - 1,
-    curr: 0,
-  }
-}
-
-pub fn lerp_closed_iter<'a, T>(
-  from: &'a T,
-  to: &'a T,
-  count: usize,
-) -> impl Iterator<Item = T> + 'a
-where
-  T: Lerp,
-{
-  LerpIter {
-    from,
-    to,
-    count,
-    max: count,
-    curr: 0,
+    curr: 0.0,
+    count: count as f32,
+    max: count as f32,
   }
 }
 

@@ -92,6 +92,22 @@ pub struct Mesh {
   pub faces: Vec<Face<IndexedPolyVert>>,
 }
 
+impl Mesh {
+  pub fn new() -> Self {
+    Default::default()
+  }
+
+  pub fn add_simple_face(&mut self, vertices: &[Point3<f32>]) {
+    let n = self.vertices.len();
+    self.vertices.extend_from_slice(vertices);
+    let mut face = Face::new(false);
+    for i in 0..vertices.len() {
+      face.add_vert(IndexedPolyVert::new(n + i));
+    }
+    self.faces.push(face);
+  }
+}
+
 struct Obj {
   pub mtl: Mtl,
   pub objs: Vec<Mesh>,

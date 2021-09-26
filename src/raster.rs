@@ -337,6 +337,13 @@ impl<T> Line<T> {
 
     true
   }
+
+  pub fn map_in_place<F>(&mut self, f: F)
+  where
+    F: Fn(&mut T) -> (),
+  {
+    self.ends.iter_mut().for_each(f)
+  }
 }
 
 #[derive(Debug, Clone)]
@@ -471,7 +478,7 @@ impl<'a, T> Trig<T> {
   where
     T: ToClipSpace + Clone + Copy + Lerp,
   {
-    const EPS: f32 = 0.0001;
+    const EPS: f32 = 0.00001;
     self
       .vertices
       .sort_unstable_by(|p1, p2| f32_cmp(&p1.to_clip().y, &p2.to_clip().y));
@@ -607,7 +614,7 @@ impl<'a, T> Trig<T> {
   where
     T: ToClipSpace,
   {
-    let comp_in_range = |v| (0.0..=1.0).contains(&v);
+    let comp_in_range = |v| (-1.0..=1.0).contains(&v);
     let pt_in_range = |p: &Point3<f32>| {
       comp_in_range(p.x) && comp_in_range(p.y) && comp_in_range(p.z)
     };
@@ -1115,6 +1122,7 @@ impl<'a> ShadowRasterizer<'a> {
     }
   }
 
+  #[allow(unused)]
   pub fn render_stencil(&mut self, volume: &ShadowVolume) {
     for face in volume.faces() {
       let sign = if Self::is_hidden_face(&face) { -1 } else { 1 };
@@ -1277,7 +1285,7 @@ impl Rasterizer {
     context: &ShaderContext,
     shader: &dyn Shader,
   ) {
-    let coords = self.to_coords(&p);
+    let coords = (p.clip_pos.x as i32, p.clip_pos.y as i32);
 
     match self.zbuffer.pixel(coords) {
       None => return,
@@ -1316,7 +1324,9 @@ impl Rasterizer {
     context: &ShaderContext,
     shader: &dyn Shader,
   ) {
-    for line in line.clip() {
+    for mut line in line.clip() {
+      line.map_in_place(|pt| self.to_screen_pt(pt));
+
       for pt in line.to_pixels() {
         self.draw_pixel(pt, context, shader);
       }
@@ -1344,7 +1354,9 @@ impl Rasterizer {
     context: &ShaderContext,
     shader: &dyn Shader,
   ) {
-    for trig in trig.clip() {
+    for mut trig in trig.clip() {
+      trig.map_in_place(|pt| self.to_screen_pt(pt));
+
       for pt in trig.to_edge_pixels() {
         self.draw_pixel(pt, context, shader);
       }
@@ -1358,11 +1370,20 @@ impl Rasterizer {
     shader: &dyn Shader,
   ) {
     self.metric.triangles_rendered += 1;
-    for trig in trig.clip() {
+    for mut trig in trig.clip() {
+      trig.map_in_place(|pt| self.to_screen_pt(pt));
+
       for pt in trig.to_fill_pixels() {
         self.draw_pixel(pt, context, shader);
       }
     }
+  }
+
+  fn to_screen_pt(&self, pt: &mut Pt) {
+    let (w, h) = self.size_f32();
+    let p = &mut pt.clip_pos;
+    p.x = 0.5 * w * (p.x + 1.0);
+    p.y = 0.5 * h * (1.0 - p.y);
   }
 }
 

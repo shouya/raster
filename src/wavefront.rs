@@ -118,7 +118,7 @@ impl Mesh {
     let vertex_normals = self
       .vertex_normals
       .iter()
-      .map(|v| matrix.transform_vector(v).normalize())
+      .map(|v| matrix.transform_vector(v))
       .collect();
 
     Self {

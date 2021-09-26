@@ -695,7 +695,7 @@ impl<T> Face<T> {
     self.map(Into::into)
   }
 
-  pub fn edges(&self) -> impl Iterator<Item = (T, T)> + '_
+  pub fn edges(&self) -> impl Iterator<Item = Line<T>> + '_
   where
     T: Copy,
   {
@@ -703,7 +703,7 @@ impl<T> Face<T> {
     (0..n).map(move |i| {
       let a = self.vertices[i];
       let b = self.vertices[(i + 1) % n];
-      (a, b)
+      Line::from((a, b))
     })
   }
 
@@ -735,8 +735,8 @@ impl<T> Face<T> {
   }
 }
 
-impl<T, const n: usize> From<[T; n]> for Face<T> {
-  fn from(verts: [T; n]) -> Self {
+impl<T, const N: usize> From<[T; N]> for Face<T> {
+  fn from(verts: [T; N]) -> Self {
     Self {
       vertices: Vec::from(verts),
       double_faced: false,
@@ -842,15 +842,9 @@ impl<'a> WorldMesh<'a> {
 
   // Return faces in world world coordinates
   pub fn faces(&self) -> impl Iterator<Item = Face<Pt>> + '_ {
-    // TODO: each vertex is transformed d(v) times which is not
-    // very efficient. Fix it.
-    self.mesh_faces().map(move |face| {
-      face.map(|vert| {
-        let mut pt = Pt::from(&vert);
-        pt.world_pos = self.transform.transform_point(&pt.clip_pos);
-        pt
-      })
-    })
+    self
+      .mesh_faces()
+      .map(move |face| face.map(|vert| Pt::from(&vert)))
   }
 
   pub fn get_face(&self, face: &Face<IndexedPolyVert>) -> Face<PolyVert<'_>> {
@@ -881,6 +875,16 @@ impl<'a> WorldMesh<'a> {
       .material
       .as_ref()
       .unwrap_or_else(|| SimpleMaterial::plaster())
+  }
+
+  pub fn apply_transformation(&self) -> Self {
+    let mesh = Cow::Owned(self.mesh.apply_transformation(&self.transform));
+    Self {
+      mesh,
+      transform: Matrix4::identity(),
+      double_faced: self.double_faced,
+      casts_shadow: self.casts_shadow,
+    }
   }
 }
 
@@ -1051,7 +1055,9 @@ impl ShadowVolume {
   }
 
   pub fn add_face(&mut self, face: &Face<Pt>, camera: &Camera, light: &Light) {
-    for (p1, p2) in face.edges() {
+    for line in face.edges() {
+      let p1 = line.a();
+      let p2 = line.b();
       let p1_far = light.project(&p1.world_pos, self.shadow_distance);
       let p2_far = light.project(&p2.world_pos, self.shadow_distance);
 
@@ -1181,8 +1187,9 @@ impl Rasterizer {
     let now = Instant::now();
 
     for mesh in scene.iter_meshes() {
+      let mesh = mesh.apply_transformation();
       for mut face in mesh.faces() {
-        let context = self.shader_context(scene, mesh);
+        let context = self.shader_context(scene, &mesh);
         let shader = mesh.shader();
 
         face.map_in_place(|mut p| shader.vertex(&context, &mut p));
@@ -1221,99 +1228,11 @@ impl Rasterizer {
         }
       }
       Wireframe => {
-        for (a, b) in face.edges() {
-          self.draw_line(a, b, &context, shader);
+        for line in face.edges() {
+          self.draw_line(line, &context, shader);
         }
       }
     }
-  }
-
-  fn contains_triangle(&self, trig: &Trig<Pt>) -> bool {
-    let in_range = |v| (0.0..=1.0).contains(&v);
-    in_range(trig.a().clip_pos.x)
-      && in_range(trig.a().clip_pos.y)
-      && in_range(trig.a().clip_pos.z)
-  }
-
-  fn clip_triangle(&self, trig: Trig<Pt>) -> SmallVec<[Trig<Pt>; 2]> {
-    trig.clip()
-  }
-
-  // return false if the line is off-view and should be skipped
-  fn clip_line(&self, a: &mut Pt, b: &mut Pt) -> bool {
-    let get_x = |p: &Pt| p.clip_pos.x;
-    let get_y = |p: &Pt| p.clip_pos.y;
-    let get_z = |p: &Pt| p.clip_pos.z;
-
-    if !Self::clip_line_component(a, b, get_x, -1.0, 1.0) {
-      return false;
-    }
-    if !Self::clip_line_component(a, b, get_y, -1.0, 1.0) {
-      return false;
-    }
-    if !Self::clip_line_component(a, b, get_z, -1.0, 1.0) {
-      return false;
-    }
-
-    true
-  }
-
-  // return false if the line is off-view and should be skipped
-  fn clip_line_component<F>(
-    a: &mut Pt,
-    b: &mut Pt,
-    get_comp: F,
-    min: f32,
-    max: f32,
-  ) -> bool
-  where
-    F: Fn(&Pt) -> f32,
-  {
-    let mut av = get_comp(a);
-    let mut bv = get_comp(b);
-
-    if av < min && bv < min {
-      // both beyond min; skip this line
-      return false;
-    }
-    if av > max && bv > max {
-      // both beyond max; skip this line
-      return false;
-    }
-    if av >= min && av <= max && bv >= min && bv <= max {
-      // within the range; draw without clipping
-      return true;
-    }
-
-    if av < min && bv >= min {
-      // clip a on min
-      let t = (min - av) / (bv - av);
-      assert!((0.0..=1.0).contains(&t));
-      *a = lerp(t, a, b);
-    } else if av >= min && bv < min {
-      // clip b on min
-      let t = (min - av) / (bv - av);
-      assert!((0.0..=1.0).contains(&t));
-      *b = lerp(t, a, b);
-    }
-
-    // recalculate because a and b may be changed
-    av = get_comp(a);
-    bv = get_comp(b);
-
-    if av > max && bv <= max {
-      // clip a on max
-      let t = (max - av) / (bv - av);
-      assert!((0.0..=1.0).contains(&t));
-      *a = lerp(t, a, b);
-    } else if av <= max && bv > max {
-      // clip b on max
-      let t = (max - av) / (bv - av);
-      assert!((0.0..=1.0).contains(&t));
-      *b = lerp(t, a, b);
-    }
-
-    true
   }
 
   pub fn to_coords(&self, pt: &Pt) -> (i32, i32) {
@@ -1393,73 +1312,18 @@ impl Rasterizer {
 
   fn draw_line(
     &mut self,
-    mut p1: Pt,
-    mut p2: Pt,
+    line: Line<Pt>,
     context: &ShaderContext,
     shader: &dyn Shader,
   ) {
-    if !self.clip_line(&mut p1, &mut p2) {
-      // out of screen
-      return;
-    }
-
-    self.metric.lines_drawn += 1;
-
-    let (p1x, p1y) = self.to_coords(&p1);
-    let (p2x, p2y) = self.to_coords(&p2);
-    let dx = p2x - p1x;
-    let dy = p2y - p1y;
-    let n = max(dx.abs(), dy.abs());
-    for pt in lerp_closed_iter(p1, p2, n as usize) {
-      self.draw_pixel(pt, context, shader);
+    for line in line.clip() {
+      for pt in line.to_pixels() {
+        self.draw_pixel(pt, context, shader);
+      }
     }
   }
 
   // fill a triangle that is flat at bottom
-  fn fill_upper_triangle(
-    &mut self,
-    top: Pt,
-    bottom_left: Pt,
-    bottom_right: Pt,
-    context: &ShaderContext,
-    shader: &dyn Shader,
-  ) {
-    self.metric.sub_triangles_rendered += 1;
-
-    let top_y = self.to_y_coord(top.clip_y());
-    let bottom_y = self.to_y_coord(bottom_left.clip_y());
-    let h = (top_y - bottom_y).abs() as usize;
-
-    let left_pts_iter = lerp_closed_iter(top, bottom_left, h);
-    let right_pts_iter = lerp_closed_iter(top, bottom_right, h);
-
-    for (l, r) in left_pts_iter.zip(right_pts_iter) {
-      self.draw_horizontal_line(l, r, context, shader)
-    }
-  }
-
-  fn fill_lower_triangle(
-    &mut self,
-    top_left: Pt,
-    top_right: Pt,
-    bottom: Pt,
-    context: &ShaderContext,
-    shader: &dyn Shader,
-  ) {
-    self.metric.sub_triangles_rendered += 1;
-
-    let top_y = self.to_y_coord(top_left.clip_y());
-    let bottom_y = self.to_y_coord(bottom.clip_y());
-    let h = (top_y - bottom_y).abs() as usize;
-    // non-zero h
-    let left_pts_iter = lerp_closed_iter(top_left, bottom, h);
-    let right_pts_iter = lerp_closed_iter(top_right, bottom, h);
-
-    for (l, r) in left_pts_iter.zip(right_pts_iter) {
-      self.draw_horizontal_line(l, r, context, shader)
-    }
-  }
-
   fn shader_context<'a>(
     &self,
     scene: &'a Scene,
@@ -1480,11 +1344,10 @@ impl Rasterizer {
     context: &ShaderContext,
     shader: &dyn Shader,
   ) {
-    for trig in self.clip_triangle(trig) {
-      let pts: Vec<_> = trig.vertices().into();
-      self.draw_line(pts[0], pts[1], &context, shader);
-      self.draw_line(pts[1], pts[2], &context, shader);
-      self.draw_line(pts[2], pts[0], &context, shader);
+    for trig in trig.clip() {
+      for pt in trig.to_edge_pixels() {
+        self.draw_pixel(pt, context, shader);
+      }
     }
   }
 
@@ -1495,71 +1358,10 @@ impl Rasterizer {
     shader: &dyn Shader,
   ) {
     self.metric.triangles_rendered += 1;
-    for trig in self.clip_triangle(trig) {
-      self.metric.clipped_triangles_rendered += 1;
-      let mut pts: Vec<_> = trig.vertices().into();
-
-      let [upper, lower] = Self::horizontally_split_triangle(
-        pts.as_mut_slice().try_into().unwrap(),
-      );
-
-      if let Some([a, b, c]) = upper {
-        self.fill_upper_triangle(a, b, c, &context, shader);
+    for trig in trig.clip() {
+      for pt in trig.to_fill_pixels() {
+        self.draw_pixel(pt, context, shader);
       }
-
-      if let Some([a, b, c]) = lower {
-        self.fill_lower_triangle(a, b, c, &context, shader);
-      }
-    }
-  }
-
-  fn horizontally_split_triangle(pts: &mut [Pt; 3]) -> [Option<[Pt; 3]>; 2] {
-    const EPS: f32 = 0.0001;
-    pts.sort_unstable_by(|p1, p2| f32_cmp(&p1.clip_y(), &p2.clip_y()));
-
-    if abs_diff_eq!(pts[0].clip_y(), pts[2].clip_y(), epsilon = EPS) {
-      // just a flat line
-      let upper_trig = [pts[0], pts[1], pts[2]];
-      return [Some(upper_trig), None];
-    }
-
-    if abs_diff_eq!(pts[0].clip_y(), pts[1].clip_y(), epsilon = EPS) {
-      // a lower triangle
-      let lower_trig = [pts[0], pts[1], pts[2]];
-      return [None, Some(lower_trig)];
-    }
-
-    if abs_diff_eq!(pts[1].clip_y(), pts[2].clip_y(), epsilon = EPS) {
-      // a lower triangle
-      let upper_trig = [pts[0], pts[1], pts[2]];
-      return [Some(upper_trig), None];
-    }
-
-    // a normal triangle that we need to split
-    let t =
-      (pts[1].clip_y() - pts[0].clip_y()) / (pts[2].clip_y() - pts[0].clip_y());
-    let ptl = lerp(t, &pts[0], &pts[2]);
-    let ptr = pts[1];
-
-    let upper_trig = [pts[0], ptl, ptr];
-    let lower_trig = [ptl, ptr, pts[2]];
-
-    [Some(upper_trig), Some(lower_trig)]
-  }
-
-  fn draw_horizontal_line(
-    &mut self,
-    p1: Pt,
-    p2: Pt,
-    context: &ShaderContext,
-    shader: &dyn Shader,
-  ) {
-    self.metric.horizontal_lines_drawn += 1;
-    let x1 = self.to_x_coord(p1.clip_x());
-    let x2 = self.to_x_coord(p2.clip_x());
-    let w = (x1 - x2).abs() as usize;
-    for p in lerp_closed_iter(p1, p2, w) {
-      self.draw_pixel(p, context, shader);
     }
   }
 }

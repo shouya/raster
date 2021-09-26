@@ -96,9 +96,6 @@ impl<'a> ShaderContext<'a> {
 pub trait Shader {
   fn vertex(&self, context: &ShaderContext, pt: &mut Pt) {
     pt.clip_pos = context.camera.transform_point(&pt.world_pos);
-
-    let normal = context.model.transform_vector(&pt.normal);
-    pt.set_normal(normal);
   }
 
   fn fragment(&self, context: &ShaderContext, pt: &mut Pt);

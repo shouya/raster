@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fs::File, io::Read, path::Path, str::FromStr};
 
 use anyhow::{ensure, Result};
-use nalgebra::{Point3, Vector2, Vector3};
+use nalgebra::{Matrix4, Point3, Vector2, Vector3};
 
 use crate::{
   raster::{Color, Face, Image, IndexedPolyVert, COLOR},
@@ -93,10 +93,12 @@ pub struct Mesh {
 }
 
 impl Mesh {
+  #[allow(unused)]
   pub fn new() -> Self {
     Default::default()
   }
 
+  #[allow(unused)]
   pub fn add_simple_face(&mut self, vertices: &[Point3<f32>]) {
     let n = self.vertices.len();
     self.vertices.extend_from_slice(vertices);
@@ -105,6 +107,27 @@ impl Mesh {
       face.add_vert(IndexedPolyVert::new(n + i));
     }
     self.faces.push(face);
+  }
+
+  pub fn apply_transformation(&self, matrix: &Matrix4<f32>) -> Self {
+    let vertices = self
+      .vertices
+      .iter()
+      .map(|p| matrix.transform_point(p))
+      .collect();
+    let vertex_normals = self
+      .vertex_normals
+      .iter()
+      .map(|v| matrix.transform_vector(v).normalize())
+      .collect();
+
+    Self {
+      vertices,
+      vertex_normals,
+      material: self.material.clone(),
+      texture_coords: self.texture_coords.clone(),
+      faces: self.faces.clone(),
+    }
   }
 }
 

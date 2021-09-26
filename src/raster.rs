@@ -10,7 +10,7 @@ use crate::{
     Light, Shader, ShaderContext, ShaderOptions, SimpleMaterial, TextureStash,
   },
   util::f32_cmp,
-  wavefront::{Mesh, MeshObject},
+  wavefront::Mesh,
 };
 
 pub type Color = Vector4<f32>;
@@ -216,6 +216,130 @@ impl Camera {
 }
 
 #[derive(Debug, Clone)]
+pub struct Line<T> {
+  ends: [T; 2],
+}
+
+impl<T> From<[T; 2]> for Line<T> {
+  fn from(ends: [T; 2]) -> Self {
+    Self { ends }
+  }
+}
+
+impl<T> From<(T, T)> for Line<T> {
+  fn from(ends: (T, T)) -> Self {
+    Self {
+      ends: [ends.0, ends.1],
+    }
+  }
+}
+
+impl<T> Line<T> {
+  pub fn a(&self) -> &T {
+    &self.ends[0]
+  }
+  pub fn b(&self) -> &T {
+    &self.ends[1]
+  }
+
+  // The caller needs to ensure "self" is
+  pub fn to_horizontal_pixels(self) -> impl Iterator<Item = T>
+  where
+    T: ToClipSpace + Clone + Copy + Lerp,
+  {
+    let x1 = self.a().to_clip().x;
+    let x2 = self.b().to_clip().x;
+    let w = (x1 - x2).abs() as usize;
+    lerp_closed_iter(self.ends[0], self.ends[1], w)
+  }
+
+  pub fn to_pixels(self) -> impl Iterator<Item = T>
+  where
+    T: ToClipSpace + Clone + Copy + Lerp,
+  {
+    let a = self.a().to_clip();
+    let b = self.b().to_clip();
+    let dx = b.x - a.x;
+    let dy = b.y - a.y;
+    let n = f32::max(dx.abs(), dy.abs());
+    lerp_closed_iter(self.ends[0], self.ends[1], n as usize)
+  }
+
+  pub fn clip(mut self) -> impl Iterator<Item = Line<T>>
+  where
+    T: ToClipSpace + Clone + Copy + Lerp,
+  {
+    let get_x = |p: &Point3<f32>| p.x;
+    let get_y = |p: &Point3<f32>| p.y;
+    let get_z = |p: &Point3<f32>| p.z;
+
+    if !self.clip_component(get_x, -1.0, 1.0) {
+      return None.into_iter();
+    }
+    if !self.clip_component(get_y, -1.0, 1.0) {
+      return None.into_iter();
+    }
+    if !self.clip_component(get_z, -1.0, 1.0) {
+      return None.into_iter();
+    }
+
+    Some(self).into_iter()
+  }
+
+  fn clip_component<F>(&mut self, get_comp: F, min: f32, max: f32) -> bool
+  where
+    T: ToClipSpace + Clone + Copy + Lerp,
+    F: Fn(&Point3<f32>) -> f32,
+  {
+    let mut av = get_comp(self.a().to_clip());
+    let mut bv = get_comp(self.b().to_clip());
+
+    if av < min && bv < min {
+      // both beyond min; skip this line
+      return false;
+    }
+    if av > max && bv > max {
+      // both beyond max; skip this line
+      return false;
+    }
+    if av >= min && av <= max && bv >= min && bv <= max {
+      // within the range; draw without clipping
+      return true;
+    }
+
+    if av < min && bv >= min {
+      // clip a on min
+      let t = (min - av) / (bv - av);
+      debug_assert!((0.0..=1.0).contains(&t));
+      self.ends[0] = lerp(t, self.a(), self.b());
+    } else if av >= min && bv < min {
+      // clip b on min
+      let t = (min - av) / (bv - av);
+      debug_assert!((0.0..=1.0).contains(&t));
+      self.ends[1] = lerp(t, self.a(), self.b());
+    }
+
+    // recalculate because a and b may be changed
+    av = get_comp(self.a().to_clip());
+    bv = get_comp(self.b().to_clip());
+
+    if av > max && bv <= max {
+      // clip a on max
+      let t = (max - av) / (bv - av);
+      debug_assert!((0.0..=1.0).contains(&t));
+      self.ends[0] = lerp(t, self.a(), self.b());
+    } else if av <= max && bv > max {
+      // clip b on max
+      let t = (max - av) / (bv - av);
+      debug_assert!((0.0..=1.0).contains(&t));
+      self.ends[1] = lerp(t, self.a(), self.b());
+    }
+
+    true
+  }
+}
+
+#[derive(Debug, Clone)]
 pub struct Trig<T> {
   vertices: [T; 3],
 }
@@ -238,14 +362,14 @@ impl<'a, T> Trig<T> {
   }
 
   #[allow(unused)]
-  pub fn edges<S>(&'a self) -> impl Iterator<Item = (S, S)>
+  pub fn edges(&'a self) -> impl Iterator<Item = Line<T>>
   where
-    S: From<&'a T>,
+    T: Clone,
   {
     vec![
-      (From::from(&self.vertices[0]), From::from(&self.vertices[1])),
-      (From::from(&self.vertices[1]), From::from(&self.vertices[2])),
-      (From::from(&self.vertices[2]), From::from(&self.vertices[0])),
+      (self.vertices[0].clone(), self.vertices[1].clone()).into(),
+      (self.vertices[1].clone(), self.vertices[2].clone()).into(),
+      (self.vertices[2].clone(), self.vertices[0].clone()).into(),
     ]
     .into_iter()
   }
@@ -285,33 +409,28 @@ impl<'a, T> Trig<T> {
   }
 
   // the caller needs to ensure self.vert.to_clip are of screen coords
-  pub fn to_pixels(self) -> impl Iterator<Item = T>
+  pub fn to_fill_pixels(self) -> impl Iterator<Item = T>
   where
     T: ToClipSpace + Clone + Copy + Lerp,
   {
     let [upper, lower] = self.horizontally_split().map(|trig| trig.into_iter());
     let upper = upper.flat_map(|trig| trig.upper_trig_to_horizontal_lines());
     let lower = lower.flat_map(|trig| trig.lower_trig_to_horizontal_lines());
-    let vertical_bounds = upper .chain(lower);
+    let lines = upper.chain(lower);
 
-    vertical_bounds.flat_map(Self::to_horizontal_pixels)
+    lines.flat_map(|line| line.to_horizontal_pixels())
   }
 
-  fn to_horizontal_pixels(x_bounds: (T, T)) -> impl Iterator<Item = T>
+  pub fn to_edge_pixels(self) -> impl Iterator<Item = T>
   where
     T: ToClipSpace + Clone + Copy + Lerp,
   {
-    let x1 = x_bounds.0.to_clip().x;
-    let x2 = x_bounds.1.to_clip().x;
-    let w = (x1 - x2).abs() as usize;
-    lerp_closed_iter(x_bounds.0, x_bounds.1, w)
+    self.edges().flat_map(|line| line.to_pixels())
   }
 
   // the caller needs to ensure self is an upper trig and
   // self.vert.to_clip are of screen coordinates
-  pub fn upper_trig_to_horizontal_lines(
-    self,
-  ) -> impl Iterator<Item = (T, T)>
+  pub fn upper_trig_to_horizontal_lines(self) -> impl Iterator<Item = Line<T>>
   where
     T: ToClipSpace + Clone + Copy + Lerp,
   {
@@ -326,12 +445,10 @@ impl<'a, T> Trig<T> {
     let left_pts_iter = lerp_closed_iter(*top, *bottom_left, h);
     let right_pts_iter = lerp_closed_iter(*top, *bottom_right, h);
 
-    left_pts_iter.zip(right_pts_iter)
+    left_pts_iter.zip(right_pts_iter).map(Line::from)
   }
 
-  pub fn lower_trig_to_horizontal_lines(
-    self,
-  ) -> impl Iterator<Item = (T, T)>
+  pub fn lower_trig_to_horizontal_lines(self) -> impl Iterator<Item = Line<T>>
   where
     T: ToClipSpace + Clone + Copy + Lerp,
   {
@@ -346,7 +463,7 @@ impl<'a, T> Trig<T> {
     let left_pts_iter = lerp_closed_iter(*top_left, *bottom, h);
     let right_pts_iter = lerp_closed_iter(*top_right, *bottom, h);
 
-    left_pts_iter.zip(right_pts_iter)
+    left_pts_iter.zip(right_pts_iter).map(Line::from)
   }
 
   // returns two triangles whose vertices are ordered by y values
@@ -590,6 +707,16 @@ impl<T> Face<T> {
     })
   }
 
+  pub fn normal(&self) -> Vector3<f32>
+  where
+    T: ToClipSpace,
+  {
+    debug_assert!(self.vertices.len() >= 3);
+    let v1 = self.vertices()[1].to_clip() - self.vertices()[0].to_clip();
+    let v2 = self.vertices()[2].to_clip() - self.vertices()[0].to_clip();
+    v1.cross(&v2)
+  }
+
   pub fn map_in_place<F>(&mut self, f: F)
   where
     F: Fn(&mut T) -> (),
@@ -604,6 +731,15 @@ impl<T> Face<T> {
     Face {
       vertices: self.vertices.into_iter().map(f).collect(),
       double_faced: self.double_faced,
+    }
+  }
+}
+
+impl<T, const n: usize> From<[T; n]> for Face<T> {
+  fn from(verts: [T; n]) -> Self {
+    Self {
+      vertices: Vec::from(verts),
+      double_faced: false,
     }
   }
 }
@@ -903,15 +1039,54 @@ pub struct RasterizerMetric {
   pub render_time: f32,
 }
 
+// the coords of volume are all in clip space
+pub struct ShadowVolume {
+  volume: Vec<Face<Point3<f32>>>,
+  shadow_distance: f32,
+}
+
+impl ShadowVolume {
+  pub fn new() {
+    let shadow_distance = 10000.0;
+  }
+
+  pub fn add_face(&mut self, face: &Face<Pt>, camera: &Camera, light: &Light) {
+    for (p1, p2) in face.edges() {
+      let p1_far = light.project(&p1.world_pos, self.shadow_distance);
+      let p2_far = light.project(&p2.world_pos, self.shadow_distance);
+
+      let face: [Point3<f32>; 4] = [
+        camera.project_point(&p1.world_pos),
+        camera.project_point(&p2.world_pos),
+        camera.project_point(&p2_far),
+        camera.project_point(&p1_far),
+      ];
+      self.volume.push(Face::from(face));
+    }
+  }
+
+  pub fn add_world_mesh(
+    &mut self,
+    mesh: &WorldMesh,
+    camera: &Camera,
+    light: &Light,
+  ) {
+    for face in mesh.faces() {
+      self.add_face(&face, camera, light);
+    }
+  }
+
+  pub fn faces(&self) -> impl Iterator<Item = &Face<Point3<f32>>> + '_ {
+    self.volume.iter()
+  }
+}
+
 pub struct ShadowRasterizer<'a> {
   size: (f32, f32),
   light: &'a Light,
   camera: &'a Camera,
   zbuffer: &'a Image<f32>,
   stencil_buffer: Image<i32>,
-  // Coordinates are all in clip space
-  shadow_volume: WorldMesh<'a>,
-  shadow_distance: f32,
 }
 
 impl<'a> ShadowRasterizer<'a> {
@@ -922,8 +1097,6 @@ impl<'a> ShadowRasterizer<'a> {
   ) -> Self {
     let size = zbuffer.dimension;
     let stencil_buffer = Image::new_filled(size, &0);
-    let shadow_volume = WorldMesh::new();
-    let shadow_distance = 10000.0;
 
     let size = (size.0 as f32, size.1 as f32);
 
@@ -933,45 +1106,31 @@ impl<'a> ShadowRasterizer<'a> {
       camera,
       zbuffer,
       stencil_buffer,
-      shadow_volume,
-      shadow_distance,
     }
   }
 
-  pub fn add_face(&mut self, face: &Face<Pt>) {
-    for (p1, p2) in face.edges() {
-      let p1_far = self.light.project(&p1.world_pos, self.shadow_distance);
-      let p2_far = self.light.project(&p2.world_pos, self.shadow_distance);
-
-      let face: [Point3<f32>; 4] = [
-        self.camera.project_point(&p1.world_pos),
-        self.camera.project_point(&p2.world_pos),
-        self.camera.project_point(&p2_far),
-        self.camera.project_point(&p1_far),
-      ];
-      self.shadow_volume.mesh.to_mut().add_simple_face(&face);
-    }
-  }
-
-  pub fn add_world_mesh(&mut self, mesh: &WorldMesh) {
-    for face in mesh.faces() {
-      self.add_face(&face);
-    }
-  }
-
-  pub fn render_stencil(&mut self) {
-    for face in self.shadow_volume.faces() {
+  pub fn render_stencil(&mut self, volume: &ShadowVolume) {
+    for face in volume.faces() {
+      let sign = if Self::is_hidden_face(&face) { -1 } else { 1 };
       for trig in face.triangulate() {
-        let trig = trig.map(|trig| trig.clip_pos);
-        self.fill_triangle(trig)
+        self.fill_triangle(trig, sign)
       }
     }
   }
 
-  fn fill_triangle(&self, trig: Trig<Point3<f32>>) {
+  fn is_hidden_face(face: &Face<Point3<f32>>) -> bool {
+    let positive_direction: Vector3<f32> = [0.0, 0.0, 1.0].into();
+    face.normal().dot(&positive_direction) < 0.0
+  }
+
+  fn fill_triangle(&mut self, trig: Trig<Point3<f32>>, sign: i32) {
     for mut trig in trig.clip() {
       trig.map_in_place(|pt| self.to_screen_pt(pt));
-      // TODO
+      for pt in trig.to_fill_pixels() {
+        let coords = (pt.x as i32, pt.y as i32);
+        let pixel = self.stencil_buffer.pixel_mut(coords).unwrap();
+        *pixel += sign;
+      }
     }
   }
 
@@ -1222,12 +1381,7 @@ impl Rasterizer {
     }
 
     let positive_direction: Vector3<f32> = [0.0, 0.0, 1.0].into();
-    let v1 = face.vertices()[1].clip_pos - face.vertices()[0].clip_pos;
-    let v2 = face.vertices()[2].clip_pos - face.vertices()[0].clip_pos;
-    let normal = v1.cross(&v2);
-    // no need to get the real normalized normal because we don't need
-    // an exact number. The sum of the normal value is enough.
-    normal.dot(&positive_direction) < 0.0
+    face.normal().dot(&positive_direction) < 0.0
   }
 
   // do not check for zbuffer

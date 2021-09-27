@@ -1,4 +1,4 @@
-use std::{borrow::Cow, cmp::max, convert::TryInto, time::Instant};
+use std::{borrow::Cow, time::Instant};
 
 use approx::abs_diff_eq;
 use nalgebra::{Matrix4, Point3, Vector2, Vector3, Vector4};
@@ -242,11 +242,13 @@ impl<T> Line<T> {
     &self.ends[1]
   }
 
-  // The caller needs to ensure "self" is
+  // The caller needs to ensure "self" is in screen coordinates
   pub fn to_horizontal_pixels(self) -> impl Iterator<Item = T>
   where
     T: ToClipSpace + Clone + Copy + Lerp,
   {
+    // ensure the line is indeed flat
+    debug_assert!((self.a().to_clip().y - self.b().to_clip().y) as i32 == 0);
     let x1 = self.a().to_clip().x;
     let x2 = self.b().to_clip().x;
     let w = (x1 - x2).abs() as usize;
@@ -673,13 +675,6 @@ impl<T> Face<T> {
     self.double_faced
   }
 
-  pub fn as_ref(&self) -> Face<&T> {
-    Face {
-      vertices: self.vertices.iter().collect(),
-      double_faced: self.double_faced,
-    }
-  }
-
   pub fn len(&self) -> usize {
     self.vertices.len()
   }
@@ -699,13 +694,6 @@ impl<T> Face<T> {
     }
 
     res.into_iter()
-  }
-
-  pub fn convert<S>(self) -> Face<S>
-  where
-    S: From<T>,
-  {
-    self.map(Into::into)
   }
 
   pub fn edges(&self) -> impl Iterator<Item = Line<T>> + '_
@@ -844,6 +832,7 @@ impl<'a> WorldMesh<'a> {
     self
   }
 
+  #[allow(unused)]
   pub fn casts_shadow(mut self, casts_shadow: bool) -> Self {
     self.casts_shadow = casts_shadow;
     self
@@ -1055,9 +1044,13 @@ pub struct ShadowVolume {
   shadow_distance: f32,
 }
 
+#[allow(unused)]
 impl ShadowVolume {
-  pub fn new() {
-    let shadow_distance = 10000.0;
+  pub fn new() -> Self {
+    Self {
+      volume: vec![],
+      shadow_distance: 10000.0,
+    }
   }
 
   pub fn add_face(&mut self, face: &Face<Pt>, camera: &Camera, light: &Light) {
@@ -1093,12 +1086,14 @@ impl ShadowVolume {
   }
 }
 
+#[allow(unused)]
 pub struct ShadowRasterizer<'a> {
   size: (f32, f32),
   zbuffer: &'a Image<f32>,
   stencil_buffer: Image<i32>,
 }
 
+#[allow(unused)]
 impl<'a> ShadowRasterizer<'a> {
   pub fn new(zbuffer: &'a Image<f32>) -> Self {
     let size = zbuffer.dimension;

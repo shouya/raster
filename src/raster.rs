@@ -250,7 +250,8 @@ impl<T> Line<T> {
     let x1 = self.a().to_clip().x;
     let x2 = self.b().to_clip().x;
     let w = (x1 - x2).abs() as usize;
-    lerp_closed_iter(self.ends[0], self.ends[1], w)
+
+    lerp_closed_iter(self.ends[0], self.ends[1], w + 1)
   }
 
   pub fn to_pixels(self) -> impl Iterator<Item = T>
@@ -261,8 +262,8 @@ impl<T> Line<T> {
     let b = self.b().to_clip();
     let dx = b.x - a.x;
     let dy = b.y - a.y;
-    let n = f32::max(dx.abs(), dy.abs());
-    lerp_closed_iter(self.ends[0], self.ends[1], n as usize)
+    let n = f32::max(dx.abs(), dy.abs()) as usize;
+    lerp_closed_iter(self.ends[0], self.ends[1], n + 1)
   }
 
   pub fn clip(mut self) -> impl Iterator<Item = Line<T>>
@@ -420,9 +421,13 @@ impl<'a, T> Trig<T> {
   where
     T: ToClipSpace + Clone + Copy + Lerp,
   {
-    let [upper, lower] = self.horizontally_split().map(|trig| trig.into_iter());
-    let upper = upper.flat_map(|trig| trig.upper_trig_to_horizontal_lines());
-    let lower = lower.flat_map(|trig| trig.lower_trig_to_horizontal_lines());
+    let [upper, lower] = self.horizontally_split();
+    let upper = upper
+      .into_iter()
+      .flat_map(|trig| trig.upper_trig_to_horizontal_lines());
+    let lower = lower
+      .into_iter()
+      .flat_map(|trig| trig.lower_trig_to_horizontal_lines());
     let lines = upper.chain(lower);
 
     lines.flat_map(|line| line.to_horizontal_pixels())
@@ -449,8 +454,8 @@ impl<'a, T> Trig<T> {
     let bottom_y = bottom_left.to_clip().y;
     let h = (top_y - bottom_y).abs() as usize;
 
-    let left_pts_iter = lerp_closed_iter(*top, *bottom_left, h);
-    let right_pts_iter = lerp_closed_iter(*top, *bottom_right, h);
+    let left_pts_iter = lerp_closed_iter(*top, *bottom_left, h + 1);
+    let right_pts_iter = lerp_closed_iter(*top, *bottom_right, h + 1);
 
     left_pts_iter.zip(right_pts_iter).map(Line::from)
   }
@@ -467,8 +472,8 @@ impl<'a, T> Trig<T> {
     let bottom_y = bottom.to_clip().y;
     let h = (top_y - bottom_y).abs() as usize;
 
-    let left_pts_iter = lerp_closed_iter(*top_left, *bottom, h);
-    let right_pts_iter = lerp_closed_iter(*top_right, *bottom, h);
+    let left_pts_iter = lerp_closed_iter(*top_left, *bottom, h + 1);
+    let right_pts_iter = lerp_closed_iter(*top_right, *bottom, h + 1);
 
     left_pts_iter.zip(right_pts_iter).map(Line::from)
   }
@@ -478,7 +483,7 @@ impl<'a, T> Trig<T> {
   where
     T: ToClipSpace + Clone + Copy + Lerp,
   {
-    const EPS: f32 = 0.00001;
+    const EPS: f32 = 0.1;
     self
       .vertices
       .sort_unstable_by(|p1, p2| f32_cmp(&p1.to_clip().y, &p2.to_clip().y));
@@ -503,6 +508,7 @@ impl<'a, T> Trig<T> {
 
     // a normal triangle that we need to split
     let t = (by - ay) / (cy - ay);
+    // dbg!(cy - ay);
     let ptl = lerp(t, self.a(), self.c());
     let ptr = *self.b();
 
@@ -1005,13 +1011,6 @@ impl Pt {
     self.normal = normal.normalize();
   }
 
-  pub fn clip_x(&self) -> f32 {
-    self.clip_pos.x
-  }
-  pub fn clip_y(&self) -> f32 {
-    self.clip_pos.y
-  }
-
   pub fn depth(&self) -> f32 {
     self.clip_pos.z
   }
@@ -1096,18 +1095,12 @@ impl ShadowVolume {
 
 pub struct ShadowRasterizer<'a> {
   size: (f32, f32),
-  light: &'a Light,
-  camera: &'a Camera,
   zbuffer: &'a Image<f32>,
   stencil_buffer: Image<i32>,
 }
 
 impl<'a> ShadowRasterizer<'a> {
-  pub fn new(
-    light: &'a Light,
-    camera: &'a Camera,
-    zbuffer: &'a Image<f32>,
-  ) -> Self {
+  pub fn new(zbuffer: &'a Image<f32>) -> Self {
     let size = zbuffer.dimension;
     let stencil_buffer = Image::new_filled(size, &0);
 
@@ -1115,8 +1108,6 @@ impl<'a> ShadowRasterizer<'a> {
 
     ShadowRasterizer {
       size,
-      light,
-      camera,
       zbuffer,
       stencil_buffer,
     }
@@ -1243,23 +1234,6 @@ impl Rasterizer {
     }
   }
 
-  pub fn to_coords(&self, pt: &Pt) -> (i32, i32) {
-    let (w, h) = self.size_f32();
-    let point = pt.clip_pos;
-    let x = 0.5 * w * (point.x + 1.0);
-    let y = 0.5 * h * (1.0 - point.y);
-    (x as i32, y as i32)
-  }
-
-  pub fn to_x_coord(&self, x: f32) -> i32 {
-    let (w, _h) = self.size_f32();
-    (0.5 * (x + 1.0) * w) as i32
-  }
-  pub fn to_y_coord(&self, y: f32) -> i32 {
-    let (_w, h) = self.size_f32();
-    (0.5 * h * (1.0 - y)) as i32
-  }
-
   pub fn zbuffer_image(&self) -> Image<Color> {
     let to_comp = |d| (d + 1.0) / 2.0;
     let to_color = |d| COLOR::rgb(to_comp(d), to_comp(d), to_comp(d));
@@ -1286,6 +1260,11 @@ impl Rasterizer {
     shader: &dyn Shader,
   ) {
     let coords = (p.clip_pos.x as i32, p.clip_pos.y as i32);
+    let (x, y) = coords;
+    let (w, h) = self.size();
+    if x < 0 || x >= w || y < 0 || y >= h {
+      return;
+    }
 
     match self.zbuffer.pixel(coords) {
       None => return,
@@ -1370,6 +1349,7 @@ impl Rasterizer {
     shader: &dyn Shader,
   ) {
     self.metric.triangles_rendered += 1;
+
     for mut trig in trig.clip() {
       trig.map_in_place(|pt| self.to_screen_pt(pt));
 
@@ -1384,6 +1364,10 @@ impl Rasterizer {
     let p = &mut pt.clip_pos;
     p.x = 0.5 * w * (p.x + 1.0);
     p.y = 0.5 * h * (1.0 - p.y);
+  }
+
+  fn size(&self) -> (i32, i32) {
+    (self.size.0 as i32, self.size.1 as i32)
   }
 }
 

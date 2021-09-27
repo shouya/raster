@@ -59,9 +59,8 @@ where
 struct LerpIter<T> {
   from: T,
   to: T,
-  curr: f32,
-  max: f32,
-  count: f32,
+  curr: usize,
+  max: usize,
 }
 
 impl<T> Iterator for LerpIter<T>
@@ -73,9 +72,13 @@ where
     if self.curr > self.max {
       return None;
     }
-    let t = self.curr / self.count;
+    let t = if self.max != 0 {
+      self.curr as f32 / self.max as f32
+    } else {
+      0.5
+    };
     let v = lerp(t, &self.from, &self.to);
-    self.curr += 1.0;
+    self.curr += 1;
     Some(v)
   }
 }
@@ -89,12 +92,12 @@ pub fn lerp_closed_iter<T>(
 where
   T: Lerp,
 {
+  debug_assert!(count > 0);
   LerpIter {
     from,
     to,
-    curr: 0.0,
-    count: count as f32,
-    max: count as f32,
+    curr: 0,
+    max: count,
   }
 }
 

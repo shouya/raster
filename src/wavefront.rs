@@ -1,11 +1,11 @@
 use std::{collections::HashMap, fs::File, io::Read, path::Path, str::FromStr};
 
 use anyhow::{ensure, Result};
-use nalgebra::{Matrix4, Point3, Vector2, Vector3};
 
 use crate::{
   raster::{Color, Face, Image, IndexedPolyVert, COLOR},
   shader::{SimpleMaterial, TextureStash},
+  types::{Point3, Vector2, Vector3, Mat4},
 };
 
 struct Mtl {
@@ -86,9 +86,9 @@ impl Mtl {
 #[derive(Clone, Default, Debug)]
 pub struct Mesh {
   pub material: Option<SimpleMaterial>,
-  pub vertices: Vec<Point3<f32>>,
-  pub vertex_normals: Vec<Vector3<f32>>,
-  pub texture_coords: Vec<Vector2<f32>>,
+  pub vertices: Vec<Point3>,
+  pub vertex_normals: Vec<Vector3>,
+  pub texture_coords: Vec<Vector2>,
   pub faces: Vec<Face<IndexedPolyVert>>,
 }
 
@@ -99,7 +99,7 @@ impl Mesh {
   }
 
   #[allow(unused)]
-  pub fn add_simple_face(&mut self, vertices: &[Point3<f32>]) {
+  pub fn add_simple_face(&mut self, vertices: &[Point3]) {
     let n = self.vertices.len();
     self.vertices.extend_from_slice(vertices);
     let mut face = Face::new(false);
@@ -109,16 +109,16 @@ impl Mesh {
     self.faces.push(face);
   }
 
-  pub fn apply_transformation(&self, matrix: &Matrix4<f32>) -> Self {
+  pub fn apply_transformation(&self, matrix: &Mat4) -> Self {
     let vertices = self
       .vertices
       .iter()
-      .map(|p| matrix.transform_point(p))
+      .map(|p| matrix.transform_point3a(*p))
       .collect();
     let vertex_normals = self
       .vertex_normals
       .iter()
-      .map(|v| matrix.transform_vector(v))
+      .map(|v| matrix.transform_vector3a(*v))
       .collect();
 
     Self {
@@ -240,14 +240,14 @@ fn parse_float(s: &str) -> Result<f32> {
   Ok(f32::from_str(s)?)
 }
 
-fn parse_point3(vs: &[&str]) -> Result<Point3<f32>> {
+fn parse_point3(vs: &[&str]) -> Result<Point3> {
   Ok(Point3::from_slice(&parse_floats(vs)?))
 }
-fn parse_vec3(vs: &[&str]) -> Result<Vector3<f32>> {
-  Ok(Vector3::from_column_slice(&parse_floats(vs)?))
+fn parse_vec3(vs: &[&str]) -> Result<Vector3> {
+  Ok(Vector3::from_slice(&parse_floats(vs)?))
 }
-fn parse_vec2(vs: &[&str]) -> Result<Vector2<f32>> {
-  Ok(Vector2::from_column_slice(&parse_floats(vs)?))
+fn parse_vec2(vs: &[&str]) -> Result<Vector2> {
+  Ok(Vector2::from_slice(&parse_floats(vs)?))
 }
 
 fn parse_texture_color(

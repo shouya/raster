@@ -1,4 +1,4 @@
-use nalgebra::{Point3, Vector2, Vector3, Vector4};
+use crate::types::{Vector2, Vector3, Vector4};
 
 pub trait Lerp {
   fn lerp(&self, other: &Self, t: f32) -> Self;
@@ -101,7 +101,7 @@ where
   }
 }
 
-impl Lerp for Vector4<f32> {
+impl Lerp for Vector4 {
   fn lerp(&self, other: &Self, t: f32) -> Self {
     Vector4::new(
       lerp(t, &self.x, &other.x),
@@ -112,7 +112,7 @@ impl Lerp for Vector4<f32> {
   }
 }
 
-impl Lerp for Vector3<f32> {
+impl Lerp for Vector3 {
   fn lerp(&self, other: &Self, t: f32) -> Self {
     Vector3::new(
       lerp(t, &self.x, &other.x),
@@ -122,17 +122,12 @@ impl Lerp for Vector3<f32> {
   }
 }
 
-impl Lerp for Point3<f32> {
-  fn lerp(&self, other: &Self, t: f32) -> Self {
-    Point3::new(
-      lerp(t, &self.x, &other.x),
-      lerp(t, &self.y, &other.y),
-      lerp(t, &self.z, &other.z),
-    )
-  }
-}
+// impl Lerp for Point3 {}
+//
+// Point3 is the same type as Vector3 under different alias so we
+// don't need to implement it
 
-impl Lerp for Vector2<f32> {
+impl Lerp for Vector2 {
   fn lerp(&self, other: &Self, t: f32) -> Self {
     Vector2::new(lerp(t, &self.x, &other.x), lerp(t, &self.y, &other.y))
   }

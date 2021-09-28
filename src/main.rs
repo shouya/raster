@@ -13,18 +13,26 @@ use eframe::{
   epi::{self, TextureAllocator},
   NativeOptions,
 };
-use nalgebra::{Point3, Rotation, Translation3};
-use raster::{COLOR, Camera, Color, Rasterizer, RasterizerMetric, RasterizerMode, Scene, WorldMesh};
+use glam::{EulerRot, Quat};
+use raster::{
+  Camera, Color, Rasterizer, RasterizerMetric, RasterizerMode, Scene,
+  WorldMesh, COLOR,
+};
 use shader::{Light, ShaderOptions};
 use wavefront::MeshObject;
 
 mod lerp;
 mod raster;
 mod shader;
+mod types;
 mod util;
 mod wavefront;
 
-use crate::{raster::Image, shader::TextureFilterMode};
+use crate::{
+  raster::Image,
+  shader::TextureFilterMode,
+  types::{Mat4, Point3, Vector3},
+};
 
 pub struct RenderResult {
   pub image: Image<Color>,
@@ -304,13 +312,16 @@ impl RasterApp {
       // rotation
       if resp.dragged_by(Primary) {
         let t = &self.tunable;
-        let rot_delta = Rotation::from_euler_angles(
+        let rot_delta = Mat4::from_euler(
+          EulerRot::XYZ,
           d.y / size.1 * ROTATION_SPEED,
           d.x / size.0 * ROTATION_SPEED,
           0.0,
         );
-        let rot_old = Rotation::from_euler_angles(t.rot[0], t.rot[1], t.rot[2]);
-        let rot_new = (rot_delta * rot_old).euler_angles();
+        let rot_old =
+          Mat4::from_euler(EulerRot::XYZ, t.rot[0], t.rot[1], t.rot[2]);
+        let rot_new =
+          Quat::from_mat4(&(rot_delta * rot_old)).to_euler(EulerRot::XYZ);
         self.tunable.rot[0] = rot_new.0;
         self.tunable.rot[1] = rot_new.1;
         self.tunable.rot[2] = rot_new.2;
@@ -533,7 +544,8 @@ fn sample_scene<'a>(tun: &'a Tunable, cache: &'a mut SceneCache) -> Scene<'a> {
   };
 
   let mut camera = Camera::new_perspective(16.0 / 9.0, fov, tun.znear, zfar);
-  let cam_trans = Translation3::new(0.0, 0.0, tun.distance).to_homogeneous();
+  let cam_trans =
+    Mat4::from_translation(Vector3::new(0.0, 0.0, tun.distance).into());
   camera.transformd(&cam_trans);
 
   // let rotation = camera
@@ -543,10 +555,9 @@ fn sample_scene<'a>(tun: &'a Tunable, cache: &'a mut SceneCache) -> Scene<'a> {
   //   .transform_vector(&Vector3::new(tun.rot_horizontal, tun.rot_vertical, 0.0));
   let mut scene = Scene::new(camera);
 
-  let translation = Translation3::from(tun.trans).to_homogeneous();
+  let translation = Mat4::from_translation(tun.trans.into());
   let rotation =
-    Rotation::from_euler_angles(tun.rot[0], tun.rot[1], tun.rot[2])
-      .to_homogeneous();
+    Mat4::from_euler(EulerRot::XYZ, tun.rot[0], tun.rot[1], tun.rot[2]);
 
   let mesh_obj = cache.get_mesh_obj(&tun.model_file);
   scene.set_texture_stash(&mesh_obj.textures);

@@ -1,7 +1,6 @@
 use std::{borrow::Cow, time::Instant};
 
 use approx::abs_diff_eq;
-use nalgebra::{Matrix4, Point3, Vector2, Vector3, Vector4};
 use smallvec::{smallvec, SmallVec};
 
 use crate::{
@@ -11,23 +10,24 @@ use crate::{
   },
   util::f32_cmp,
   wavefront::Mesh,
+  types::{Vector3, Vector4, Vector2, Point3, Mat4},
 };
 
-pub type Color = Vector4<f32>;
+pub type Color = Vector4;
 
 #[allow(non_snake_case)]
 pub(crate) mod COLOR {
   use super::*;
 
-  pub const fn black() -> Color {
+  pub fn black() -> Color {
     rgba(0.0, 0.0, 0.0, 1.0)
   }
 
-  pub const fn rgb(r: f32, g: f32, b: f32) -> Color {
+  pub fn rgb(r: f32, g: f32, b: f32) -> Color {
     rgba(r, g, b, 1.0)
   }
-  pub const fn rgba(r: f32, g: f32, b: f32, a: f32) -> Color {
-    Vector4::new(r, g, b, a)
+  pub fn rgba(r: f32, g: f32, b: f32, a: f32) -> Color {
+    glam::vec4(r, g, b, a)
   }
 }
 
@@ -133,12 +133,12 @@ impl<T> Image<T> {
 }
 
 impl Image<Color> {
-  pub fn nearest_color(&self, uv: Vector2<f32>) -> Color {
+  pub fn nearest_color(&self, uv: Vector2) -> Color {
     let coords = self.nearest_coords(uv, (0, 0));
     *self.pixel(coords).unwrap()
   }
 
-  pub fn bilinear_color(&self, uv: Vector2<f32>) -> Color {
+  pub fn bilinear_color(&self, uv: Vector2) -> Color {
     // row 1: |a b|
     // row 2: |c d|
     let color_a = *self.pixel(self.nearest_coords(uv, (0, 0))).unwrap();
@@ -159,7 +159,7 @@ impl Image<Color> {
   }
 
   /// if out of bound, return the nearest coordinates within the bound
-  fn nearest_coords(&self, uv: Vector2<f32>, offset: (i32, i32)) -> (i32, i32) {
+  fn nearest_coords(&self, uv: Vector2, offset: (i32, i32)) -> (i32, i32) {
     let mut x = (uv.x * (self.width() - 1) as f32) as i32 + offset.0;
     let mut y = (uv.y * (self.height() - 1) as f32) as i32 + offset.1;
 
@@ -183,8 +183,8 @@ impl Image<Color> {
 #[derive(Debug, Clone)]
 pub struct Camera {
   // world coordinate
-  inv_transform: Matrix4<f32>,
-  perspective: Matrix4<f32>,
+  inv_transform: Mat4,
+  perspective: Mat4,
 }
 
 impl Camera {
@@ -194,24 +194,24 @@ impl Camera {
     znear: f32,
     zfar: f32,
   ) -> Self {
-    let perspective = Matrix4::new_perspective(aspect, fovy, znear, zfar);
-    let inv_transform = Matrix4::identity();
+    let perspective = Mat4::perspective_rh_gl(fovy, aspect, znear, zfar);
+    let inv_transform = Mat4::IDENTITY;
     Self {
       perspective,
       inv_transform,
     }
   }
 
-  pub fn matrix(&self) -> Matrix4<f32> {
+  pub fn matrix(&self) -> Mat4 {
     self.perspective * self.inv_transform
   }
 
-  pub fn transformd(&mut self, trans: &Matrix4<f32>) {
-    self.inv_transform *= trans.pseudo_inverse(0.0001).unwrap();
+  pub fn transformd(&mut self, trans: &Mat4) {
+    self.inv_transform *= trans.inverse();
   }
 
-  pub fn project_point(&self, pt: &Point3<f32>) -> Point3<f32> {
-    self.matrix().transform_point(pt)
+  pub fn project_point(&self, pt: &Point3) -> Point3 {
+    self.matrix().project_point3((*pt).into()).into()
   }
 }
 
@@ -272,9 +272,9 @@ impl<T> Line<T> {
   where
     T: ToClipSpace + Clone + Copy + Lerp,
   {
-    let get_x = |p: &Point3<f32>| p.x;
-    let get_y = |p: &Point3<f32>| p.y;
-    let get_z = |p: &Point3<f32>| p.z;
+    let get_x = |p: &Point3| p.x;
+    let get_y = |p: &Point3| p.y;
+    let get_z = |p: &Point3| p.z;
 
     if !self.clip_component(get_x, -1.0, 1.0) {
       return None.into_iter();
@@ -292,7 +292,7 @@ impl<T> Line<T> {
   fn clip_component<F>(&mut self, get_comp: F, min: f32, max: f32) -> bool
   where
     T: ToClipSpace + Clone + Copy + Lerp,
-    F: Fn(&Point3<f32>) -> f32,
+    F: Fn(&Point3) -> f32,
   {
     let mut av = get_comp(self.a().to_clip());
     let mut bv = get_comp(self.b().to_clip());
@@ -623,7 +623,7 @@ impl<'a, T> Trig<T> {
     T: ToClipSpace,
   {
     let comp_in_range = |v| (-1.0..=1.0).contains(&v);
-    let pt_in_range = |p: &Point3<f32>| {
+    let pt_in_range = |p: &Point3| {
       comp_in_range(p.x) && comp_in_range(p.y) && comp_in_range(p.z)
     };
 
@@ -635,17 +635,17 @@ impl<'a, T> Trig<T> {
 
 /// Types that represents a point in clip space
 pub trait ToClipSpace {
-  fn to_clip(&self) -> &Point3<f32>;
+  fn to_clip(&self) -> &Point3;
 }
 
 impl ToClipSpace for Pt {
-  fn to_clip(&self) -> &Point3<f32> {
+  fn to_clip(&self) -> &Point3 {
     &self.clip_pos
   }
 }
 
-impl ToClipSpace for Point3<f32> {
-  fn to_clip(&self) -> &Point3<f32> {
+impl ToClipSpace for Point3 {
+  fn to_clip(&self) -> &Point3 {
     &self
   }
 }
@@ -708,14 +708,14 @@ impl<T> Face<T> {
     })
   }
 
-  pub fn normal(&self) -> Vector3<f32>
+  pub fn normal(&self) -> Vector3
   where
     T: ToClipSpace,
   {
     debug_assert!(self.vertices.len() >= 3);
-    let v1 = self.vertices()[1].to_clip() - self.vertices()[0].to_clip();
-    let v2 = self.vertices()[2].to_clip() - self.vertices()[0].to_clip();
-    v1.cross(&v2)
+    let v1 = *self.vertices()[1].to_clip() - *self.vertices()[0].to_clip();
+    let v2 = *self.vertices()[2].to_clip() - *self.vertices()[0].to_clip();
+    v1.cross(v2)
   }
 
   pub fn map_in_place<F>(&mut self, f: F)
@@ -792,14 +792,14 @@ impl IndexedPolyVert {
 
 #[derive(Debug, Clone, Copy)]
 pub struct PolyVert<'a> {
-  pub vertex: &'a Point3<f32>,
-  pub texture_coords: Option<&'a Vector2<f32>>,
-  pub normal: Option<&'a Vector3<f32>>,
+  pub vertex: &'a Point3,
+  pub texture_coords: Option<&'a Vector2>,
+  pub normal: Option<&'a Vector3>,
 }
 
 #[derive(Debug, Clone)]
 pub struct WorldMesh<'a> {
-  pub transform: Matrix4<f32>,
+  pub transform: Mat4,
   pub double_faced: bool,
   pub casts_shadow: bool,
   pub mesh: Cow<'a, Mesh>,
@@ -808,7 +808,7 @@ pub struct WorldMesh<'a> {
 impl<'a> From<&'a Mesh> for WorldMesh<'a> {
   fn from(mesh: &'a Mesh) -> Self {
     Self {
-      transform: Matrix4::identity(),
+      transform: Mat4::IDENTITY,
       mesh: Cow::Borrowed(mesh),
       double_faced: false,
       casts_shadow: false,
@@ -820,7 +820,7 @@ impl<'a> WorldMesh<'a> {
   #[allow(unused)]
   pub fn new() -> Self {
     Self {
-      transform: Matrix4::identity(),
+      transform: Mat4::IDENTITY,
       mesh: Default::default(),
       double_faced: false,
       casts_shadow: false,
@@ -866,7 +866,7 @@ impl<'a> WorldMesh<'a> {
     res
   }
 
-  pub fn transformed(mut self, transform: Matrix4<f32>) -> Self {
+  pub fn transformed(mut self, transform: Mat4) -> Self {
     self.transform = transform * self.transform;
     self
   }
@@ -883,7 +883,7 @@ impl<'a> WorldMesh<'a> {
     let mesh = Cow::Owned(self.mesh.apply_transformation(&self.transform));
     Self {
       mesh,
-      transform: Matrix4::identity(),
+      transform: Mat4::IDENTITY,
       double_faced: self.double_faced,
       casts_shadow: self.casts_shadow,
     }
@@ -957,13 +957,13 @@ impl Default for RasterizerMode {
 /// A point on screen with integer xy coordinates and floating depth (z)
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub struct Pt {
-  pub clip_pos: Point3<f32>,
-  pub world_pos: Point3<f32>,
+  pub clip_pos: Point3,
+  pub world_pos: Point3,
   pub color: Color,
-  pub normal: Vector3<f32>,
-  pub uv: Vector2<f32>,
-  pub buf_v2: Option<Vector2<f32>>,
-  pub buf_v3: Option<Vector3<f32>>,
+  pub normal: Vector3,
+  pub uv: Vector2,
+  pub buf_v2: Option<Vector2>,
+  pub buf_v3: Option<Vector3>,
 }
 
 impl<'a> From<&PolyVert<'a>> for Pt {
@@ -980,23 +980,23 @@ impl<'a> From<&PolyVert<'a>> for Pt {
 }
 
 impl Pt {
-  pub fn new(point: Point3<f32>) -> Self {
+  pub fn new(point: Point3) -> Self {
     Self {
       clip_pos: point,
       world_pos: point,
       color: COLOR::rgba(1.0, 0.0, 0.0, 1.0),
       uv: Vector2::new(0.0, 0.0),
-      normal: point.coords,
+      normal: point,
       buf_v2: None,
       buf_v3: None,
     }
   }
 
-  pub fn set_uv(&mut self, uv: Vector2<f32>) {
+  pub fn set_uv(&mut self, uv: Vector2) {
     self.uv = uv;
   }
 
-  pub fn set_normal(&mut self, normal: Vector3<f32>) {
+  pub fn set_normal(&mut self, normal: Vector3) {
     self.normal = normal.normalize();
   }
 
@@ -1040,7 +1040,7 @@ pub struct RasterizerMetric {
 
 // the coords of volume are all in clip space
 pub struct ShadowVolume {
-  volume: Vec<Face<Point3<f32>>>,
+  volume: Vec<Face<Point3>>,
   shadow_distance: f32,
 }
 
@@ -1060,7 +1060,7 @@ impl ShadowVolume {
       let p1_far = light.project(&p1.world_pos, self.shadow_distance);
       let p2_far = light.project(&p2.world_pos, self.shadow_distance);
 
-      let face: [Point3<f32>; 4] = [
+      let face: [Point3; 4] = [
         camera.project_point(&p1.world_pos),
         camera.project_point(&p2.world_pos),
         camera.project_point(&p2_far),
@@ -1081,7 +1081,7 @@ impl ShadowVolume {
     }
   }
 
-  pub fn faces(&self) -> impl Iterator<Item = &Face<Point3<f32>>> + '_ {
+  pub fn faces(&self) -> impl Iterator<Item = &Face<Point3>> + '_ {
     self.volume.iter()
   }
 }
@@ -1118,12 +1118,12 @@ impl<'a> ShadowRasterizer<'a> {
     }
   }
 
-  fn is_hidden_face(face: &Face<Point3<f32>>) -> bool {
-    let positive_direction: Vector3<f32> = [0.0, 0.0, 1.0].into();
-    face.normal().dot(&positive_direction) < 0.0
+  fn is_hidden_face(face: &Face<Point3>) -> bool {
+    let positive_direction: Vector3 = [0.0, 0.0, 1.0].into();
+    face.normal().dot(positive_direction) < 0.0
   }
 
-  fn fill_triangle(&mut self, trig: Trig<Point3<f32>>, sign: i32) {
+  fn fill_triangle(&mut self, trig: Trig<Point3>, sign: i32) {
     for mut trig in trig.clip() {
       trig.map_in_place(|pt| self.to_screen_pt(pt));
       for pt in trig.to_fill_pixels() {
@@ -1134,7 +1134,7 @@ impl<'a> ShadowRasterizer<'a> {
     }
   }
 
-  fn to_screen_pt(&self, clip_pt: &mut Point3<f32>) {
+  fn to_screen_pt(&self, clip_pt: &mut Point3) {
     let (w, h) = self.size;
     clip_pt.x = 0.5 * (clip_pt.x + 1.0) * w;
     clip_pt.y = 0.5 * (1.0 - clip_pt.y) * h;
@@ -1281,8 +1281,8 @@ impl Rasterizer {
       return false;
     }
 
-    let positive_direction: Vector3<f32> = [0.0, 0.0, 1.0].into();
-    face.normal().dot(&positive_direction) < 0.0
+    let positive_direction: Vector3 = [0.0, 0.0, 1.0].into();
+    face.normal().dot(positive_direction) < 0.0
   }
 
   // do not check for zbuffer
@@ -1374,17 +1374,6 @@ mod test {
 
   #[test]
   fn test_camera() {
-    let aspect = 16.0 / 9.0;
-    let fov = 130.0 / 180.0 * PI;
-    let znear = 1.0;
-    let zfar = 10.0;
-    let perspective = Matrix4::new_perspective(aspect, fov, znear, zfar);
-    for z in -10..10 {
-      let pt = Point3::new(1.0, 2.0, z as f32);
-      dbg!(z);
-      dbg!(1.0 / perspective.transform_point(&pt).z);
-    }
-
     assert!(false);
   }
 }

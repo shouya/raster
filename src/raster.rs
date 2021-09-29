@@ -8,9 +8,9 @@ use crate::{
   shader::{
     Light, Shader, ShaderContext, ShaderOptions, SimpleMaterial, TextureStash,
   },
+  types::{Mat4, Point3, Vector2, Vector3, Vector4},
   util::f32_cmp,
   wavefront::Mesh,
-  types::{Vector3, Vector4, Vector2, Point3, Mat4},
 };
 
 pub type Color = Vector4;
@@ -54,15 +54,12 @@ impl<T> Image<T> {
     }
   }
 
-  pub fn new_filled(size: (usize, usize), val: &T) -> Self
+  pub fn new_filled(size: (usize, usize), val: T) -> Self
   where
-    T: Clone,
+    T: Copy,
   {
     let len = size.0 * size.1;
-    let mut buffer = Vec::with_capacity(len);
-    for _ in 0..len {
-      buffer.push(val.clone());
-    }
+    let buffer = vec![val; len];
 
     Self {
       dimension: size,
@@ -1097,7 +1094,7 @@ pub struct ShadowRasterizer<'a> {
 impl<'a> ShadowRasterizer<'a> {
   pub fn new(zbuffer: &'a Image<f32>) -> Self {
     let size = zbuffer.dimension;
-    let stencil_buffer = Image::new_filled(size, &0);
+    let stencil_buffer = Image::new_filled(size, 0);
 
     let size = (size.0 as f32, size.1 as f32);
 
@@ -1153,7 +1150,7 @@ pub struct Rasterizer {
 impl Rasterizer {
   pub fn new(size: (usize, usize)) -> Self {
     let image = Image::new(size);
-    let zbuffer = Image::new_filled(size, &1.01);
+    let zbuffer = Image::new_filled(size, 1.01);
     let mode = RasterizerMode::Shaded;
     let size = (image.width() as f32, image.height() as f32);
     let metric = Default::default();

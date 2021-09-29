@@ -232,9 +232,10 @@ impl Shader for SimpleMaterial {
     for light in context.lights.iter() {
       let normal = pt.normal.normalize();
       let light_angle = (*light.pos() - pt.world_pos).normalize();
-      let camera_angle =
-        Vector3::from(context.camera.project_point3(Point3::ZERO.into()))
-          * -1.0;
+      let camera_angle = Vector3::new(0.0, 0.0, -1.0);
+      // this is
+      // Vector3::from(context.camera.project_point3(Point3::ZERO.into()))
+      //   * -1.0;
       let light_refl_angle = reflect(&light_angle, &normal).normalize();
 
       // diffuse color

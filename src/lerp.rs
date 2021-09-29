@@ -103,22 +103,13 @@ where
 
 impl Lerp for Vector4 {
   fn lerp(&self, other: &Self, t: f32) -> Self {
-    Vector4::new(
-      lerp(t, &self.x, &other.x),
-      lerp(t, &self.y, &other.y),
-      lerp(t, &self.z, &other.z),
-      lerp(t, &self.w, &other.w),
-    )
+    Self::lerp(*self, *other, t)
   }
 }
 
 impl Lerp for Vector3 {
   fn lerp(&self, other: &Self, t: f32) -> Self {
-    Vector3::new(
-      lerp(t, &self.x, &other.x),
-      lerp(t, &self.y, &other.y),
-      lerp(t, &self.z, &other.z),
-    )
+    Self::lerp(*self, *other, t)
   }
 }
 
@@ -129,6 +120,6 @@ impl Lerp for Vector3 {
 
 impl Lerp for Vector2 {
   fn lerp(&self, other: &Self, t: f32) -> Self {
-    Vector2::new(lerp(t, &self.x, &other.x), lerp(t, &self.y, &other.y))
+    Self::lerp(*self, *other, t)
   }
 }

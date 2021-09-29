@@ -1105,7 +1105,6 @@ impl<'a> ShadowRasterizer<'a> {
     }
   }
 
-  #[allow(unused)]
   pub fn render_stencil(&mut self, volume: &ShadowVolume) {
     for face in volume.faces() {
       let sign = if Self::is_hidden_face(&face) { -1 } else { 1 };
@@ -1125,8 +1124,12 @@ impl<'a> ShadowRasterizer<'a> {
       trig.map_in_place(|pt| self.to_screen_pt(pt));
       for pt in trig.to_fill_pixels() {
         let coords = (pt.x as i32, pt.y as i32);
-        let pixel = self.stencil_buffer.pixel_mut(coords).unwrap();
-        *pixel += sign;
+        let depth = *self.zbuffer.pixel(coords).unwrap();
+
+        if pt.z > depth {
+          let pixel = self.stencil_buffer.pixel_mut(coords).unwrap();
+          *pixel += sign;
+        }
       }
     }
   }

@@ -19,13 +19,10 @@ pub type Color = Vector4;
 pub(crate) mod COLOR {
   use super::*;
 
-  pub fn black() -> Color {
-    rgba(0.0, 0.0, 0.0, 1.0)
-  }
-
   pub fn rgb(r: f32, g: f32, b: f32) -> Color {
     rgba(r, g, b, 1.0)
   }
+
   pub fn rgba(r: f32, g: f32, b: f32, a: f32) -> Color {
     glam::vec4(r, g, b, a)
   }
@@ -77,6 +74,10 @@ impl<T> Image<T> {
 
   pub fn height(&self) -> usize {
     self.dimension.1
+  }
+
+  pub fn pixels_mut(&mut self) -> impl Iterator<Item = &mut T> {
+    self.pixels.iter_mut()
   }
 
   pub fn pixel(&self, coords: (i32, i32)) -> Option<&T> {
@@ -796,7 +797,7 @@ pub struct PolyVert<'a> {
 
 #[derive(Debug, Clone)]
 pub struct WorldMesh<'a> {
-  pub transform: Mat4,
+  pub transform: Option<Mat4>,
   pub double_faced: bool,
   pub casts_shadow: bool,
   pub mesh: Cow<'a, Mesh>,
@@ -805,10 +806,10 @@ pub struct WorldMesh<'a> {
 impl<'a> From<&'a Mesh> for WorldMesh<'a> {
   fn from(mesh: &'a Mesh) -> Self {
     Self {
-      transform: Mat4::IDENTITY,
+      transform: None,
       mesh: Cow::Borrowed(mesh),
       double_faced: false,
-      casts_shadow: false,
+      casts_shadow: true,
     }
   }
 }
@@ -817,10 +818,10 @@ impl<'a> WorldMesh<'a> {
   #[allow(unused)]
   pub fn new() -> Self {
     Self {
-      transform: Mat4::IDENTITY,
+      transform: None,
       mesh: Default::default(),
       double_faced: false,
-      casts_shadow: false,
+      casts_shadow: true,
     }
   }
 
@@ -864,7 +865,8 @@ impl<'a> WorldMesh<'a> {
   }
 
   pub fn transformed(mut self, transform: Mat4) -> Self {
-    self.transform = transform * self.transform;
+    let current_transform = self.transform.unwrap_or(Mat4::IDENTITY);
+    self.transform = Some(transform * current_transform);
     self
   }
 
@@ -877,12 +879,17 @@ impl<'a> WorldMesh<'a> {
   }
 
   pub fn apply_transformation(&self) -> Self {
-    let mesh = Cow::Owned(self.mesh.apply_transformation(&self.transform));
-    Self {
-      mesh,
-      transform: Mat4::IDENTITY,
-      double_faced: self.double_faced,
-      casts_shadow: self.casts_shadow,
+    match self.transform {
+      Some(transform) => {
+        let mesh = Cow::Owned(self.mesh.apply_transformation(&transform));
+        Self {
+          mesh,
+          transform: None,
+          double_faced: self.double_faced,
+          casts_shadow: self.casts_shadow,
+        }
+      }
+      None => self.clone(),
     }
   }
 }
@@ -959,6 +966,7 @@ pub struct Pt {
   pub color: Color,
   pub normal: Vector3,
   pub uv: Vector2,
+  pub in_shadow: Option<bool>,
   pub buf_v2: Option<Vector2>,
   pub buf_v3: Option<Vector3>,
 }
@@ -984,6 +992,7 @@ impl Pt {
       color: COLOR::rgba(1.0, 0.0, 0.0, 1.0),
       uv: Vector2::new(0.0, 0.0),
       normal: point,
+      in_shadow: None,
       buf_v2: None,
       buf_v3: None,
     }
@@ -1016,6 +1025,7 @@ impl Lerp for Pt {
       uv: lerp(t, &self.uv, &other.uv),
       buf_v2: lerp(t, &self.buf_v2, &other.buf_v2),
       buf_v3: lerp(t, &self.buf_v3, &other.buf_v3),
+      in_shadow: None,
     }
   }
 }
@@ -1073,6 +1083,10 @@ impl ShadowVolume {
     camera: &Camera,
     light: &Light,
   ) {
+    if !mesh.casts_shadow {
+      return;
+    }
+
     for face in mesh.faces() {
       self.add_face(&face, camera, light);
     }
@@ -1095,7 +1109,6 @@ impl<'a> ShadowRasterizer<'a> {
   pub fn new(zbuffer: &'a Image<f32>) -> Self {
     let size = zbuffer.dimension;
     let stencil_buffer = Image::new_filled(size, 0);
-
     let size = (size.0 as f32, size.1 as f32);
 
     ShadowRasterizer {
@@ -1120,10 +1133,18 @@ impl<'a> ShadowRasterizer<'a> {
   }
 
   fn fill_triangle(&mut self, trig: Trig<Point3>, sign: i32) {
+    let (w, h) = self.size();
+
     for mut trig in trig.clip() {
       trig.map_in_place(|pt| self.to_screen_pt(pt));
       for pt in trig.to_fill_pixels() {
-        let coords = (pt.x as i32, pt.y as i32);
+        let (x, y) = (pt.x as i32, pt.y as i32);
+
+        if x < 0 || x >= w || y < 0 || y >= h {
+          return;
+        }
+
+        let coords = (x, y);
         let depth = *self.zbuffer.pixel(coords).unwrap();
 
         if pt.z > depth {
@@ -1133,26 +1154,36 @@ impl<'a> ShadowRasterizer<'a> {
       }
     }
   }
+  fn size(&self) -> (i32, i32) {
+    (self.size.0 as i32, self.size.1 as i32)
+  }
 
   fn to_screen_pt(&self, clip_pt: &mut Point3) {
     let (w, h) = self.size;
     clip_pt.x = 0.5 * (clip_pt.x + 1.0) * w;
     clip_pt.y = 0.5 * (1.0 - clip_pt.y) * h;
   }
+
+  pub fn into_stencil_buffer(self) -> Image<i32> {
+    self.stencil_buffer
+  }
 }
 
-pub struct Rasterizer {
+pub struct Rasterizer<'a> {
   size: (f32, f32),
   mode: RasterizerMode,
-  image: Image<Color>,
   zbuffer: Image<f32>,
+  image: Image<Option<Pt>>,
+  pixel_shader: Image<Option<&'a dyn Shader>>,
   metric: RasterizerMetric,
   shader_options: ShaderOptions,
+  render_shadow: bool,
 }
 
-impl Rasterizer {
+impl<'a> Rasterizer<'a> {
   pub fn new(size: (usize, usize)) -> Self {
-    let image = Image::new(size);
+    let image = Image::new_filled(size, None);
+    let pixel_shader = Image::new_filled(size, None);
     let zbuffer = Image::new_filled(size, 1.01);
     let mode = RasterizerMode::Shaded;
     let size = (image.width() as f32, image.height() as f32);
@@ -1161,11 +1192,13 @@ impl Rasterizer {
 
     Self {
       size,
-      image,
       zbuffer,
+      image,
+      pixel_shader,
       mode,
       metric,
       shader_options,
+      render_shadow: false,
     }
   }
 
@@ -1177,15 +1210,36 @@ impl Rasterizer {
     self.mode = mode;
   }
 
-  pub fn rasterize(&mut self, scene: &Scene) {
+  pub fn set_render_shadow(&mut self, render_shadow: bool) {
+    self.render_shadow = render_shadow;
+  }
+
+  pub fn rasterize(&mut self, scene: &'a Scene) {
     let now = Instant::now();
 
-    for mesh in scene.iter_meshes() {
-      let mesh = mesh.apply_transformation();
-      for mut face in mesh.faces() {
-        let context = self.shader_context(scene, &mesh);
-        let shader = mesh.shader();
+    self.rasterize_pixels(scene);
 
+    // if self.render_shadow {
+    //   let mut shadow = ShadowVolume::new();
+    //   self.rasterize_ambient_only(&mut shadow, scene);
+    //   self.rasterize_with_shadow(&shadow, scene);
+    // } else {
+    //   self.rasterize_shadowless(scene);
+    // }
+
+    self.shade_pixels(scene);
+
+    self.metric.render_time = now.elapsed().as_secs_f32();
+  }
+
+  pub fn rasterize_pixels(&mut self, scene: &'a Scene) {
+    let context = self.shader_context(scene);
+
+    for mesh in scene.iter_meshes() {
+      let shader = mesh.shader();
+      let mesh = mesh.apply_transformation();
+
+      for mut face in mesh.faces() {
         face.map_in_place(|mut p| shader.vertex(&context, &mut p));
         self.metric.vertices_shaded += face.len();
 
@@ -1195,36 +1249,41 @@ impl Rasterizer {
         }
 
         self.metric.faces_rendered += 1;
-        self.rasterize_face(&mut face, &context, shader);
+        self.rasterize_face(&mut face, shader);
       }
     }
-
-    self.metric.render_time = now.elapsed().as_secs_f32();
   }
 
-  pub fn rasterize_face(
-    &mut self,
-    face: &mut Face<Pt>,
-    context: &ShaderContext,
-    shader: &dyn Shader,
-  ) {
+  pub fn rasterize_face(&mut self, face: &mut Face<Pt>, shader: &'a dyn Shader) {
     use RasterizerMode::*;
 
     match self.mode {
       Shaded => {
         for trig in face.triangulate() {
-          self.fill_triangle(trig, &context, shader);
+          self.fill_triangle(trig, shader);
         }
       }
       Clipped => {
         for trig in face.triangulate() {
-          self.draw_triangle_clipped(trig, &context, shader);
+          self.draw_triangle_clipped(trig, shader);
         }
       }
       Wireframe => {
         for line in face.edges() {
-          self.draw_line(line, &context, shader);
+          self.draw_line(line, shader);
         }
+      }
+    }
+  }
+
+  fn shade_pixels(&mut self, scene: &Scene) {
+    let context = self.shader_context(scene);
+    let pixels = self.image.pixels_mut().zip(self.pixel_shader.pixels());
+    for pixel in pixels {
+      match pixel {
+        (None, None) => (),
+        (Some(pt), Some(shader)) => Self::shade_pixel(pt, &context, *shader),
+        _ => unreachable!(),
       }
     }
   }
@@ -1240,38 +1299,44 @@ impl Rasterizer {
   }
 
   pub fn into_image(self) -> Image<Color> {
-    self.image
+    let to_color =
+      |p: Option<Pt>| p.map(|x| x.color).unwrap_or(COLOR::rgb(0.0, 0.0, 0.0));
+    self.image.map(to_color)
   }
 
   pub fn size_f32(&self) -> (f32, f32) {
     self.size
   }
 
-  // checks the zbuffer
-  fn draw_pixel(
-    &mut self,
-    mut p: Pt,
-    context: &ShaderContext,
-    shader: &dyn Shader,
-  ) {
-    let coords = (p.clip_pos.x as i32, p.clip_pos.y as i32);
-    let (x, y) = coords;
+  fn shade_pixel(pt: &mut Pt, context: &ShaderContext, shader: &dyn Shader) {
+    // TODO: make metric modifiable without mutability
+    // self.metric.pixels_shaded += 1;
+    shader.fragment(context, pt)
+  }
+
+  // only put pixel in image buffer. does not shade it with color yet
+  fn rasterize_pixel(&mut self, pt: Pt, shader: &'a dyn Shader) {
+    let (x, y) = (pt.clip_pos.x as i32, pt.clip_pos.y as i32);
     let (w, h) = self.size();
+
     if x < 0 || x >= w || y < 0 || y >= h {
       return;
     }
 
+    let coords = (x, y);
     match self.zbuffer.pixel(coords) {
       None => return,
-      Some(d) if p.depth() > *d => {
+      Some(d) if pt.depth() >= *d => {
         self.metric.pixels_discarded += 1;
         return;
       }
       Some(_) => {
         self.metric.pixels_shaded += 1;
-        shader.fragment(context, &mut p);
-        self.put_pixel(coords, p.color);
-        self.zbuffer.put_pixel(coords, p.depth());
+
+        self.image.put_pixel(coords, Some(pt));
+        self.pixel_shader.put_pixel(coords, Some(shader));
+
+        self.zbuffer.put_pixel(coords, pt.depth());
       }
     }
   }
@@ -1285,71 +1350,44 @@ impl Rasterizer {
     face.normal().dot(positive_direction) < 0.0
   }
 
-  // do not check for zbuffer
-  fn put_pixel(&mut self, coords: (i32, i32), color: Color) {
-    if let Some(pixel) = self.image.pixel_mut(coords) {
-      *pixel = color;
-    }
-  }
-
-  fn draw_line(
-    &mut self,
-    line: Line<Pt>,
-    context: &ShaderContext,
-    shader: &dyn Shader,
-  ) {
+  fn draw_line(&mut self, line: Line<Pt>, shader: &'a dyn Shader) {
     for mut line in line.clip() {
       line.map_in_place(|pt| self.to_screen_pt(pt));
 
       for pt in line.to_pixels() {
-        self.draw_pixel(pt, context, shader);
+        self.rasterize_pixel(pt, shader);
       }
     }
   }
 
   // fill a triangle that is flat at bottom
-  fn shader_context<'a>(
-    &self,
-    scene: &'a Scene,
-    mesh: &WorldMesh,
-  ) -> ShaderContext<'a> {
+  fn shader_context<'b>(&self, scene: &'b Scene) -> ShaderContext<'b> {
     ShaderContext {
       textures: scene.texture_stash(),
       camera: scene.camera().matrix(),
-      model: mesh.transform.clone(),
       lights: scene.lights(),
       options: self.shader_options.clone(),
     }
   }
 
-  fn draw_triangle_clipped(
-    &mut self,
-    trig: Trig<Pt>,
-    context: &ShaderContext,
-    shader: &dyn Shader,
-  ) {
+  fn draw_triangle_clipped(&mut self, trig: Trig<Pt>, shader: &'a dyn Shader) {
     for mut trig in trig.clip() {
       trig.map_in_place(|pt| self.to_screen_pt(pt));
 
       for pt in trig.to_edge_pixels() {
-        self.draw_pixel(pt, context, shader);
+        self.rasterize_pixel(pt, shader);
       }
     }
   }
 
-  fn fill_triangle(
-    &mut self,
-    trig: Trig<Pt>,
-    context: &ShaderContext,
-    shader: &dyn Shader,
-  ) {
+  fn fill_triangle(&mut self, trig: Trig<Pt>, shader: &'a dyn Shader) {
     self.metric.triangles_rendered += 1;
 
     for mut trig in trig.clip() {
       trig.map_in_place(|pt| self.to_screen_pt(pt));
 
       for pt in trig.to_fill_pixels() {
-        self.draw_pixel(pt, context, shader);
+        self.rasterize_pixel(pt, shader);
       }
     }
   }

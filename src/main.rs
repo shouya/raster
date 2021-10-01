@@ -100,6 +100,7 @@ pub struct Tunable {
   double_faced: bool,
   shader_options: ShaderOptions,
   super_sampling: f32,
+  render_shadow: bool
 }
 
 impl Default for Tunable {
@@ -117,6 +118,7 @@ impl Default for Tunable {
       model_file: "assets/chair.obj".into(),
       double_faced: false,
       super_sampling: 1.0,
+      render_shadow: true
     }
   }
 }
@@ -525,6 +527,7 @@ fn render_scene(
   let mut raster = Rasterizer::new(real_size);
   raster.set_mode(tun.mode);
   raster.set_shader_options(tun.shader_options.clone());
+  raster.set_render_shadow(tun.render_shadow);
   raster.rasterize(&scene);
 
   RenderResult {

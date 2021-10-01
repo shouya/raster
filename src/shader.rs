@@ -77,7 +77,6 @@ impl Default for ShaderOptions {
 pub struct ShaderContext<'a> {
   pub textures: &'a TextureStash,
   pub camera: Mat4,
-  pub model: Mat4,
   pub lights: &'a [Light],
   pub options: ShaderOptions,
 }
@@ -225,45 +224,70 @@ impl Default for SimpleMaterial {
   }
 }
 
+impl SimpleMaterial {
+  fn diffuse_color(
+    &self,
+    context: &ShaderContext,
+    pt: &Pt,
+    light: &Light,
+  ) -> Color {
+    let normal = pt.normal.normalize();
+    let light_angle = (*light.pos() - pt.world_pos).normalize();
+    // this is
+    // Vector3::from(context.camera.project_point3(Point3::ZERO.into()))
+    //   * -1.0;
+
+    // diffuse color
+    let light_intensity = light_angle.dot(normal).max(0.0);
+    let diffuse_color = match self.color_texture {
+      Some(handle) => context.get_texture(handle, pt.uv),
+      None => self.diffuse_color,
+    };
+    let diffuse_light_color = *light.color() * diffuse_color;
+    diffuse_light_color * light_intensity
+  }
+
+  fn specular_color(&self, pt: &Pt, light: &Light) -> Color {
+    let normal = pt.normal.normalize();
+    let light_angle = (*light.pos() - pt.world_pos).normalize();
+    let light_refl_angle = reflect(&light_angle, &normal).normalize();
+    let camera_angle = Vector3::new(0.0, 0.0, -1.0);
+
+    let specular_sharpness =
+      light_refl_angle.dot(camera_angle.normalize()).max(0.0);
+    let specular_intensity = if self.specular_highlight > 1.0 {
+      f32::powf(specular_sharpness, self.specular_highlight)
+    } else {
+      0.0
+    };
+
+    *light.color() * self.specular_color * specular_intensity
+  }
+
+  fn color_from_light(
+    &self,
+    context: &ShaderContext,
+    pt: &Pt,
+    light: &Light,
+  ) -> Color {
+    self.diffuse_color(context, pt, light) + self.specular_color(pt, light)
+  }
+
+  fn fragment_ambient(&self, _context: &ShaderContext, pt: &mut Pt) {
+    pt.color = self.ambient_color * 0.1;
+  }
+}
+
 impl Shader for SimpleMaterial {
   fn fragment(&self, context: &ShaderContext, pt: &mut Pt) {
-    let mut color = COLOR::black();
+    self.fragment_ambient(context, pt);
 
-    for light in context.lights.iter() {
-      let normal = pt.normal.normalize();
-      let light_angle = (*light.pos() - pt.world_pos).normalize();
-      let camera_angle = Vector3::new(0.0, 0.0, -1.0);
-      // this is
-      // Vector3::from(context.camera.project_point3(Point3::ZERO.into()))
-      //   * -1.0;
-      let light_refl_angle = reflect(&light_angle, &normal).normalize();
-
-      // diffuse color
-      let light_intensity = light_angle.dot(normal).max(0.0);
-      let diffuse_color = match self.color_texture {
-        Some(handle) => context.get_texture(handle, pt.uv),
-        None => self.diffuse_color,
-      };
-      let diffuse_light_color = *light.color() * diffuse_color;
-      color += diffuse_light_color * light_intensity;
-
-      // specular highlight color
-      let specular_sharpness =
-        light_refl_angle.dot(camera_angle.normalize()).max(0.0);
-      let specular_intensity = if self.specular_highlight > 1.0 {
-        f32::powf(specular_sharpness, self.specular_highlight)
-      } else {
-        0.0
-      };
-
-      let specular_color = *light.color() * self.specular_color;
-
-      color += specular_color * specular_intensity;
+    // only pixels not in shadow get color from light.
+    if !pt.in_shadow.unwrap_or(false) {
+      for light in context.lights.iter() {
+        pt.color += self.color_from_light(context, pt, light);
+      }
     }
-
-    color += self.ambient_color * 0.1;
-
-    pt.color = color;
   }
 }
 

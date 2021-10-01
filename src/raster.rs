@@ -76,6 +76,15 @@ impl<T> Image<T> {
     self.dimension.1
   }
 
+  pub fn pixels_with_coords(&self) -> impl Iterator<Item = ((i32, i32), &T)> {
+    let w = self.width();
+    self.pixels.iter().enumerate().map(move |(i, p)| {
+      let x = i % w;
+      let y = i / w;
+      ((x as i32, y as i32), p)
+    })
+  }
+
   pub fn pixels_mut(&mut self) -> impl Iterator<Item = &mut T> {
     self.pixels.iter_mut()
   }
@@ -634,17 +643,30 @@ impl<'a, T> Trig<T> {
 /// Types that represents a point in clip space
 pub trait ToClipSpace {
   fn to_clip(&self) -> &Point3;
+  fn to_clip_mut(&mut self) -> &mut Point3;
+
+  fn scale_to_screen(&mut self, (w, h): (f32, f32)) {
+    let p = self.to_clip_mut();
+    p.x = 0.5 * w * (p.x + 1.0);
+    p.y = 0.5 * h * (1.0 - p.y);
+  }
 }
 
 impl ToClipSpace for Pt {
   fn to_clip(&self) -> &Point3 {
     &self.clip_pos
   }
+  fn to_clip_mut(&mut self) -> &mut Point3 {
+    &mut self.clip_pos
+  }
 }
 
 impl ToClipSpace for Point3 {
   fn to_clip(&self) -> &Point3 {
     &self
+  }
+  fn to_clip_mut(&mut self) -> &mut Point3 {
+    self
   }
 }
 
@@ -675,6 +697,19 @@ impl<T> Face<T> {
 
   pub fn len(&self) -> usize {
     self.vertices.len()
+  }
+
+  /// the caller needs to ensure T is in clip space.
+  pub fn is_hidden(&self) -> bool
+  where
+    T: ToClipSpace,
+  {
+    if self.double_faced() {
+      return false;
+    }
+
+    let positive_direction: Vector3 = [0.0, 0.0, 1.0].into();
+    self.normal().dot(positive_direction) < 0.0
   }
 
   pub fn triangulate(&self) -> impl Iterator<Item = Trig<T>>
@@ -1067,12 +1102,13 @@ impl ShadowVolume {
       let p1_far = light.project(&p1.world_pos, self.shadow_distance);
       let p2_far = light.project(&p2.world_pos, self.shadow_distance);
 
-      let face: [Point3; 4] = [
+      let face = [
         camera.project_point(&p1.world_pos),
         camera.project_point(&p2.world_pos),
         camera.project_point(&p2_far),
         camera.project_point(&p1_far),
       ];
+
       self.volume.push(Face::from(face));
     }
   }
@@ -1088,84 +1124,15 @@ impl ShadowVolume {
     }
 
     for face in mesh.faces() {
+      if face.normal().dot(*light.pos()) < 0.0 {
+        continue;
+      }
       self.add_face(&face, camera, light);
     }
   }
 
   pub fn faces(&self) -> impl Iterator<Item = &Face<Point3>> + '_ {
     self.volume.iter()
-  }
-}
-
-#[allow(unused)]
-pub struct ShadowRasterizer<'a> {
-  size: (f32, f32),
-  zbuffer: &'a Image<f32>,
-  stencil_buffer: Image<i32>,
-}
-
-#[allow(unused)]
-impl<'a> ShadowRasterizer<'a> {
-  pub fn new(zbuffer: &'a Image<f32>) -> Self {
-    let size = zbuffer.dimension;
-    let stencil_buffer = Image::new_filled(size, 0);
-    let size = (size.0 as f32, size.1 as f32);
-
-    ShadowRasterizer {
-      size,
-      zbuffer,
-      stencil_buffer,
-    }
-  }
-
-  pub fn render_stencil(&mut self, volume: &ShadowVolume) {
-    for face in volume.faces() {
-      let sign = if Self::is_hidden_face(&face) { -1 } else { 1 };
-      for trig in face.triangulate() {
-        self.fill_triangle(trig, sign)
-      }
-    }
-  }
-
-  fn is_hidden_face(face: &Face<Point3>) -> bool {
-    let positive_direction: Vector3 = [0.0, 0.0, 1.0].into();
-    face.normal().dot(positive_direction) < 0.0
-  }
-
-  fn fill_triangle(&mut self, trig: Trig<Point3>, sign: i32) {
-    let (w, h) = self.size();
-
-    for mut trig in trig.clip() {
-      trig.map_in_place(|pt| self.to_screen_pt(pt));
-      for pt in trig.to_fill_pixels() {
-        let (x, y) = (pt.x as i32, pt.y as i32);
-
-        if x < 0 || x >= w || y < 0 || y >= h {
-          return;
-        }
-
-        let coords = (x, y);
-        let depth = *self.zbuffer.pixel(coords).unwrap();
-
-        if pt.z > depth {
-          let pixel = self.stencil_buffer.pixel_mut(coords).unwrap();
-          *pixel += sign;
-        }
-      }
-    }
-  }
-  fn size(&self) -> (i32, i32) {
-    (self.size.0 as i32, self.size.1 as i32)
-  }
-
-  fn to_screen_pt(&self, clip_pt: &mut Point3) {
-    let (w, h) = self.size;
-    clip_pt.x = 0.5 * (clip_pt.x + 1.0) * w;
-    clip_pt.y = 0.5 * (1.0 - clip_pt.y) * h;
-  }
-
-  pub fn into_stencil_buffer(self) -> Image<i32> {
-    self.stencil_buffer
   }
 }
 
@@ -1217,19 +1184,93 @@ impl<'a> Rasterizer<'a> {
   pub fn rasterize(&mut self, scene: &'a Scene) {
     let now = Instant::now();
 
-    self.rasterize_pixels(scene);
-
-    // if self.render_shadow {
-    //   let mut shadow = ShadowVolume::new();
-    //   self.rasterize_ambient_only(&mut shadow, scene);
-    //   self.rasterize_with_shadow(&shadow, scene);
-    // } else {
-    //   self.rasterize_shadowless(scene);
-    // }
+    if self.render_shadow {
+      let mut shadow_volume = ShadowVolume::new();
+      self.rasterize_pixels_with_shadow(scene, &mut shadow_volume);
+      self.rasterize_shadow_volume(&shadow_volume);
+    } else {
+      self.rasterize_pixels(scene);
+    }
 
     self.shade_pixels(scene);
 
     self.metric.render_time = now.elapsed().as_secs_f32();
+  }
+
+  #[inline(never)]
+  pub fn rasterize_pixels_with_shadow(
+    &mut self,
+    scene: &'a Scene,
+    volume: &mut ShadowVolume,
+  ) {
+    let context = self.shader_context(scene);
+
+    debug_assert!(scene.lights().len() == 1);
+    let light = scene.lights().first().unwrap();
+    let camera = scene.camera();
+
+    for mesh in scene.iter_meshes() {
+      let shader = mesh.shader();
+      let mesh = mesh.apply_transformation();
+
+      volume.add_world_mesh(&mesh, camera, light);
+
+      for mut face in mesh.faces() {
+        face.map_in_place(|mut p| shader.vertex(&context, &mut p));
+        self.metric.vertices_shaded += face.len();
+
+        if face.is_hidden() {
+          self.metric.hidden_face_removed += 1;
+          continue;
+        }
+
+        self.metric.faces_rendered += 1;
+        self.rasterize_face(&mut face, shader);
+      }
+    }
+  }
+
+  #[inline(never)]
+  pub fn rasterize_shadow_volume(&mut self, volume: &ShadowVolume) {
+    let size = (self.size.0 as usize, self.size.1 as usize);
+    let mut stencil_buffer = Image::new_filled(size, 0);
+
+    for face in volume.faces() {
+      let sign = if face.is_hidden() { -1 } else { 1 };
+      for trig in face.triangulate() {
+        self.fill_trig_in_stencil_buffer(trig, sign, &mut stencil_buffer);
+      }
+    }
+  }
+
+  #[inline(never)]
+  fn fill_trig_in_stencil_buffer(
+    &self,
+    trig: Trig<Point3>,
+    sign: i32,
+    buffer: &mut Image<i32>,
+  ) {
+    let (w, h) = self.size();
+
+    for mut trig in trig.clip() {
+      trig.map_in_place(|pt| pt.scale_to_screen(self.size_f32()));
+
+      for pt in trig.to_fill_pixels() {
+        let (x, y) = (pt.x as i32, pt.y as i32);
+
+        if x < 0 || x >= w || y < 0 || y >= h {
+          return;
+        }
+
+        let coords = (x, y);
+        let depth = *self.zbuffer.pixel(coords).unwrap();
+
+        if pt.z > depth {
+          let pixel = buffer.pixel_mut(coords).unwrap();
+          *pixel += sign;
+        }
+      }
+    }
   }
 
   pub fn rasterize_pixels(&mut self, scene: &'a Scene) {
@@ -1243,7 +1284,7 @@ impl<'a> Rasterizer<'a> {
         face.map_in_place(|mut p| shader.vertex(&context, &mut p));
         self.metric.vertices_shaded += face.len();
 
-        if self.is_hidden_surface(&face) {
+        if face.is_hidden() {
           self.metric.hidden_face_removed += 1;
           continue;
         }
@@ -1254,7 +1295,11 @@ impl<'a> Rasterizer<'a> {
     }
   }
 
-  pub fn rasterize_face(&mut self, face: &mut Face<Pt>, shader: &'a dyn Shader) {
+  pub fn rasterize_face(
+    &mut self,
+    face: &mut Face<Pt>,
+    shader: &'a dyn Shader,
+  ) {
     use RasterizerMode::*;
 
     match self.mode {
@@ -1341,18 +1386,9 @@ impl<'a> Rasterizer<'a> {
     }
   }
 
-  fn is_hidden_surface(&self, face: &Face<Pt>) -> bool {
-    if face.double_faced() {
-      return false;
-    }
-
-    let positive_direction: Vector3 = [0.0, 0.0, 1.0].into();
-    face.normal().dot(positive_direction) < 0.0
-  }
-
   fn draw_line(&mut self, line: Line<Pt>, shader: &'a dyn Shader) {
     for mut line in line.clip() {
-      line.map_in_place(|pt| self.to_screen_pt(pt));
+      line.map_in_place(|pt| pt.scale_to_screen(self.size_f32()));
 
       for pt in line.to_pixels() {
         self.rasterize_pixel(pt, shader);
@@ -1372,7 +1408,7 @@ impl<'a> Rasterizer<'a> {
 
   fn draw_triangle_clipped(&mut self, trig: Trig<Pt>, shader: &'a dyn Shader) {
     for mut trig in trig.clip() {
-      trig.map_in_place(|pt| self.to_screen_pt(pt));
+      trig.map_in_place(|pt| pt.scale_to_screen(self.size_f32()));
 
       for pt in trig.to_edge_pixels() {
         self.rasterize_pixel(pt, shader);
@@ -1384,19 +1420,12 @@ impl<'a> Rasterizer<'a> {
     self.metric.triangles_rendered += 1;
 
     for mut trig in trig.clip() {
-      trig.map_in_place(|pt| self.to_screen_pt(pt));
+      trig.map_in_place(|pt| pt.scale_to_screen(self.size_f32()));
 
       for pt in trig.to_fill_pixels() {
         self.rasterize_pixel(pt, shader);
       }
     }
-  }
-
-  fn to_screen_pt(&self, pt: &mut Pt) {
-    let (w, h) = self.size_f32();
-    let p = &mut pt.clip_pos;
-    p.x = 0.5 * w * (p.x + 1.0);
-    p.y = 0.5 * h * (1.0 - p.y);
   }
 
   fn size(&self) -> (i32, i32) {

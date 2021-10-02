@@ -229,7 +229,7 @@ impl Camera {
   }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
 pub struct Line<T> {
   ends: [T; 2],
 }
@@ -1038,7 +1038,7 @@ impl Pt {
       world_pos: point,
       color: COLOR::rgba(1.0, 0.0, 0.0, 1.0),
       uv: Vector2::new(0.0, 0.0),
-      normal: point,
+      normal: Vector3::ZERO,
       in_shadow: None,
       buf_v2: None,
       buf_v3: None,
@@ -1113,14 +1113,16 @@ impl ShadowVolume {
 
   pub fn add_face(&mut self, face: &Face<Pt>, camera: &Camera, light: &Light) {
     for line in face.edges() {
-      let p1 = line.a();
-      let p2 = line.b();
-      let p1_far = light.project(&p1.world_pos, self.shadow_distance);
-      let p2_far = light.project(&p2.world_pos, self.shadow_distance);
+      let p1 = line.a().world_pos;
+      let p2 = line.b().world_pos;
+
+      // skip already visited edges
+      let p1_far = light.project(&p1, self.shadow_distance);
+      let p2_far = light.project(&p2, self.shadow_distance);
 
       let face: Face<Point3> = [
-        camera.project_point(&p1.world_pos),
-        camera.project_point(&p2.world_pos),
+        camera.project_point(&p1),
+        camera.project_point(&p2),
         camera.project_point(&p2_far),
         camera.project_point(&p1_far),
       ]
@@ -1286,7 +1288,7 @@ impl<'a> Rasterizer<'a> {
         let coords = (x, y);
         let depth = *self.zbuffer.pixel(coords).unwrap();
 
-        if pt.z > depth {
+        if pt.z > depth || depth == 1.01 {
           let pixel = buffer.pixel_mut(coords).unwrap();
           *pixel += sign;
         }

@@ -33,7 +33,7 @@ mod wavefront;
 use crate::{
   raster::Image,
   shader::TextureFilterMode,
-  types::{Mat4, Point3, Vector3},
+  types::{Mat4, Point3},
 };
 
 pub struct RenderResult {
@@ -99,7 +99,6 @@ pub enum ImageMode {
 }
 
 pub struct Tunable {
-  distance: f32,
   fov: f32,
   znear: f32,
   zfar: f32,
@@ -112,17 +111,19 @@ pub struct Tunable {
   shader_options: ShaderOptions,
   super_sampling: f32,
   render_shadow: bool,
+  visualize_light: bool,
+  light_pos: [f32; 3],
+  light_strength: f32,
 }
 
 impl Default for Tunable {
   fn default() -> Self {
     Self {
-      distance: 5.0,
       fov: 100.0,
       znear: 0.1,
       zfar: 1000.0,
       rot: [0.783, -0.3635, -0.1202],
-      trans: [0.0, 0.0, 4.4579],
+      trans: [-0.2, -0.2, -2.4579],
       shader_options: Default::default(),
       mode: RasterizerMode::Shaded,
       image_mode: ImageMode::Rendered,
@@ -130,6 +131,9 @@ impl Default for Tunable {
       double_faced: false,
       super_sampling: 1.0,
       render_shadow: false,
+      visualize_light: true,
+      light_pos: [1.0, 3.0, 1.0],
+      light_strength: 1.0,
     }
   }
 }
@@ -160,11 +164,17 @@ impl RasterApp {
         self.draw_model_selection(ui);
       });
 
-    CollapsingHeader::new("Model transformation")
+    CollapsingHeader::new("Camera transformation")
       .default_open(true)
       .show(ui, |ui| {
-        self.draw_model_rotation(ui);
-        self.draw_model_translation(ui);
+        self.draw_camera_rotation(ui);
+        self.draw_camera_translation(ui);
+      });
+
+    CollapsingHeader::new("Light control")
+      .default_open(true)
+      .show(ui, |ui| {
+        self.draw_light_control(ui);
       });
 
     CollapsingHeader::new("Shader options")
@@ -172,12 +182,17 @@ impl RasterApp {
       .show(ui, |ui| {
         self.draw_shader_options(ui);
       });
+
+    CollapsingHeader::new("Display options")
+      .default_open(true)
+      .show(ui, |ui| {
+        self.draw_display_options(ui);
+      });
   }
 
   fn draw_camera_control(&mut self, ui: &mut egui::Ui) {
     let t = &mut self.tunable;
     let sliders = [
-      (&mut t.distance, -10.0, 100.0, "Distance"),
       (&mut t.fov, 10.0, 180.0, "FoV"),
       (&mut t.znear, -100.0, 100.0, "Z near"),
       (&mut t.zfar, -100.0, 100.0, "Z far"),
@@ -190,7 +205,45 @@ impl RasterApp {
     }
   }
 
-  fn draw_model_rotation(&mut self, ui: &mut egui::Ui) {
+  fn draw_light_control(&mut self, ui: &mut egui::Ui) {
+    let t = &mut self.tunable;
+
+    let strength_control =
+      egui::Slider::new(&mut t.light_strength, 0.0..=10.0).text("Strength");
+
+    if ui.add(strength_control).changed() {
+      self.redraw = true;
+    }
+
+    if ui
+      .checkbox(&mut self.tunable.visualize_light, "Visualize lamp")
+      .changed()
+    {
+      self.redraw = true;
+    };
+
+    if ui.button("Reset position to camera").clicked() {
+      self.reset_light_position();
+      self.redraw = true;
+    }
+  }
+
+  fn reset_light_position(&mut self) {
+    let tun = &mut self.tunable;
+
+    let translation = Mat4::from_translation(tun.trans.into());
+    let rotation =
+      Mat4::from_euler(EulerRot::XYZ, tun.rot[0], tun.rot[1], tun.rot[2]);
+
+    let transform = (translation * rotation).inverse();
+    let target = transform.transform_point3a(Point3::new(0.0, 0.0, 0.0)) * 0.9;
+
+    self.tunable.light_pos[0] = target.x;
+    self.tunable.light_pos[1] = target.y;
+    self.tunable.light_pos[2] = target.z;
+  }
+
+  fn draw_camera_rotation(&mut self, ui: &mut egui::Ui) {
     ui.horizontal_top(|ui| {
       let rot = &mut self.tunable.rot;
       for i in 0..=2 {
@@ -205,7 +258,7 @@ impl RasterApp {
     });
   }
 
-  fn draw_model_translation(&mut self, ui: &mut egui::Ui) {
+  fn draw_camera_translation(&mut self, ui: &mut egui::Ui) {
     ui.horizontal_top(|ui| {
       let trans = &mut self.tunable.trans;
       for i in 0..=2 {
@@ -221,47 +274,14 @@ impl RasterApp {
   }
 
   fn draw_shader_options(&mut self, ui: &mut egui::Ui) {
-    use RasterizerMode::*;
-    let modes = [
-      (Wireframe, "Wireframe"),
-      (Shaded, "Shaded"),
-      (Clipped, "Clipped"),
-    ];
+    let t = &mut self.tunable;
 
-    ui.horizontal(|ui| {
-      let t = &mut self.tunable;
-      for (mode, text) in modes {
-        if ui.radio_value(&mut t.mode, mode, text).clicked() {
-          self.redraw = true;
-        }
-      }
-    });
-
-    if ui
-      .checkbox(&mut self.tunable.render_shadow, "Render shadow")
-      .changed()
-    {
+    if ui.checkbox(&mut t.render_shadow, "Render shadow").changed() {
       self.redraw = true;
     }
 
-    use ImageMode::*;
-    let image_modes = [
-      (Rendered, "Rendered"),
-      (DepthBuffer, "Depth"),
-      (StencilBuffer, "Stencil"),
-    ];
-
-    ui.horizontal(|ui| {
-      let t = &mut self.tunable.image_mode;
-      for (mode, text) in image_modes {
-        if ui.radio_value(t, mode, text).clicked() {
-          self.redraw = true;
-        }
-      }
-    });
-
     if ui
-      .checkbox(&mut self.tunable.double_faced, "Double-faced mesh")
+      .checkbox(&mut t.double_faced, "Double-faced mesh")
       .changed()
     {
       self.redraw = true;
@@ -285,6 +305,40 @@ impl RasterApp {
       ui.label("Supersampling");
       for n in [0.5, 1.0, 2.0, 3.0] {
         if ui.radio_value(t, n, format!("{:.1}x", n)).clicked() {
+          self.redraw = true;
+        }
+      }
+    });
+  }
+
+  fn draw_display_options(&mut self, ui: &mut egui::Ui) {
+    use RasterizerMode::*;
+    let modes = [
+      (Wireframe, "Wireframe"),
+      (Shaded, "Shaded"),
+      (Clipped, "Clipped"),
+    ];
+
+    ui.horizontal(|ui| {
+      let t = &mut self.tunable;
+      for (mode, text) in modes {
+        if ui.radio_value(&mut t.mode, mode, text).clicked() {
+          self.redraw = true;
+        }
+      }
+    });
+
+    use ImageMode::*;
+    let image_modes = [
+      (Rendered, "Rendered"),
+      (DepthBuffer, "Depth"),
+      (StencilBuffer, "Stencil"),
+    ];
+
+    ui.horizontal(|ui| {
+      let t = &mut self.tunable.image_mode;
+      for (mode, text) in image_modes {
+        if ui.radio_value(t, mode, text).clicked() {
           self.redraw = true;
         }
       }
@@ -578,9 +632,6 @@ fn sample_scene(tun: &Tunable, cache: &SceneCache) -> Scene {
   };
 
   let mut camera = Camera::new_perspective(16.0 / 9.0, fov, tun.znear, zfar);
-  let cam_trans =
-    Mat4::from_translation(Vector3::new(0.0, 0.0, tun.distance).into());
-  camera.transformd(&cam_trans);
 
   let translation = Mat4::from_translation(tun.trans.into());
   let rotation =
@@ -603,13 +654,15 @@ fn sample_scene(tun: &Tunable, cache: &SceneCache) -> Scene {
   }
 
   scene.add_light(Light::new(
-    Point3::new(1.0, 3.0, 1.0),
-    COLOR::rgb(1.0, 1.0, 1.0),
+    tun.light_pos.into(),
+    COLOR::rgb(1.0, 1.0, 1.0) * tun.light_strength,
   ));
 
-  let light_mesh_path = PathBuf::from("assets/icosphere.obj");
-  let light_mesh = cache.get_mesh_obj(&light_mesh_path);
-  scene.visualize_light(light_mesh.meshes[0].clone());
+  if tun.visualize_light {
+    let light_mesh_path = PathBuf::from("assets/icosphere.obj");
+    let light_mesh = cache.get_mesh_obj(&light_mesh_path);
+    scene.visualize_light(light_mesh.meshes[0].clone());
+  }
 
   scene
 }

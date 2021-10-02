@@ -85,6 +85,17 @@ impl<T> Image<T> {
     })
   }
 
+  pub fn pixels_mut_with_coords(
+    &mut self,
+  ) -> impl Iterator<Item = ((i32, i32), &mut T)> {
+    let w = self.width();
+    self.pixels.iter_mut().enumerate().map(move |(i, p)| {
+      let x = i % w;
+      let y = i / w;
+      ((x as i32, y as i32), p)
+    })
+  }
+
   pub fn pixels_mut(&mut self) -> impl Iterator<Item = &mut T> {
     self.pixels.iter_mut()
   }
@@ -882,6 +893,11 @@ impl WorldMesh {
     self.mesh.faces.iter().map(move |f| self.get_face(f))
   }
 
+  pub fn set_shader(mut self, shader: Box<dyn Shader>) -> Self {
+    Rc::make_mut(&mut self.mesh).set_material(shader);
+    self
+  }
+
   // Return faces in world world coordinates
   pub fn faces(&self) -> impl Iterator<Item = Face<Pt>> + '_ {
     self
@@ -1103,7 +1119,7 @@ impl ShadowVolume {
   pub fn new() -> Self {
     Self {
       volume: vec![],
-      shadow_distance: 10000.0,
+      shadow_distance: 0.5,
     }
   }
 
@@ -1116,7 +1132,6 @@ impl ShadowVolume {
       let p1 = line.a().world_pos;
       let p2 = line.b().world_pos;
 
-      // skip already visited edges
       let p1_far = light.project(&p1, self.shadow_distance);
       let p2_far = light.project(&p2, self.shadow_distance);
 
@@ -1209,6 +1224,7 @@ impl<'a> Rasterizer<'a> {
       let mut shadow_volume = ShadowVolume::new();
       self.rasterize_pixels_with_shadow(scene, &mut shadow_volume);
       self.rasterize_shadow_volume(&shadow_volume);
+      self.save_shadow_info_in_pixels();
     } else {
       self.rasterize_pixels(scene);
     }
@@ -1257,9 +1273,8 @@ impl<'a> Rasterizer<'a> {
     let mut stencil_buffer = Image::new_filled(size, 0);
 
     for face in volume.faces() {
-      let sign = if face.is_hidden() { -1 } else { 1 };
       for trig in face.triangulate() {
-        self.fill_trig_in_stencil_buffer(trig, sign, &mut stencil_buffer);
+        self.fill_trig_in_stencil_buffer(trig, &mut stencil_buffer);
       }
     }
 
@@ -1270,7 +1285,6 @@ impl<'a> Rasterizer<'a> {
   fn fill_trig_in_stencil_buffer(
     &self,
     trig: Trig<Point3>,
-    sign: i32,
     buffer: &mut Image<i32>,
   ) {
     let (w, h) = self.size();
@@ -1288,10 +1302,25 @@ impl<'a> Rasterizer<'a> {
         let coords = (x, y);
         let depth = *self.zbuffer.pixel(coords).unwrap();
 
-        if pt.z > depth || depth == 1.01 {
+        if depth <= 1.0 && pt.z < depth {
           let pixel = buffer.pixel_mut(coords).unwrap();
-          *pixel += sign;
+          if *pixel == 1 {
+            *pixel = 0;
+          } else {
+            *pixel = 1;
+          }
         }
+      }
+    }
+  }
+
+  fn save_shadow_info_in_pixels(&mut self) {
+    let stencil_buffer = self.stencil_buffer.as_ref().unwrap();
+
+    for (coords, pixel) in self.image.pixels_mut_with_coords() {
+      if let Some(pt) = pixel {
+        let stencil_value = stencil_buffer.pixel(coords).unwrap();
+        pt.in_shadow = Some(*stencil_value == 1);
       }
     }
   }

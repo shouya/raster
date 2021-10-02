@@ -55,14 +55,15 @@ impl Light {
 
   pub fn project(&self, pt: &Point3, distance: f32) -> Point3 {
     let dir = (*pt - self.pos).normalize();
-    *pt + dir * distance
+    dir * distance + *pt
   }
 
   pub fn to_world_mesh(&self, mesh: Rc<Mesh>) -> WorldMesh {
-    const SCALE: f32 = 0.1;
+    const SCALE: f32 = 0.03;
     WorldMesh::from(mesh)
-      .transformed(Mat4::from_translation(self.pos.into()))
       .transformed(Mat4::from_scale(Vector3::new(SCALE, SCALE, SCALE).into()))
+      .transformed(Mat4::from_translation(self.pos.into()))
+      .set_shader(Box::new(PureColor::new(self.color)))
       .double_faced(true)
       .casts_shadow(false)
   }

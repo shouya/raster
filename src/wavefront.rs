@@ -155,6 +155,10 @@ impl Mesh {
       faces: self.faces.clone(),
     }
   }
+
+  pub fn set_material(&mut self, material: Box<dyn Shader>) {
+    self.material = Some(material);
+  }
 }
 
 struct Obj {

@@ -21,7 +21,7 @@ use raster::{
   WorldMesh, COLOR,
 };
 use shader::{Light, ShaderOptions};
-use wavefront::{MeshObject};
+use wavefront::MeshObject;
 
 mod lerp;
 mod raster;
@@ -557,6 +557,12 @@ fn sample_scene(tun: &Tunable, cache: &SceneCache) -> Scene {
     Mat4::from_translation(Vector3::new(0.0, 0.0, tun.distance).into());
   camera.transformd(&cam_trans);
 
+  let translation = Mat4::from_translation(tun.trans.into());
+  let rotation =
+    Mat4::from_euler(EulerRot::XYZ, tun.rot[0], tun.rot[1], tun.rot[2]);
+  camera.transformd(&translation.inverse());
+  camera.transformd(&rotation.inverse());
+
   // let rotation = camera
   //   .matrix()
   //   .pseudo_inverse(0.001)
@@ -564,22 +570,15 @@ fn sample_scene(tun: &Tunable, cache: &SceneCache) -> Scene {
   //   .transform_vector(&Vector3::new(tun.rot_horizontal, tun.rot_vertical, 0.0));
   let mut scene = Scene::new(camera);
 
-  let translation = Mat4::from_translation(tun.trans.into());
-  let rotation =
-    Mat4::from_euler(EulerRot::XYZ, tun.rot[0], tun.rot[1], tun.rot[2]);
-
   let mesh_obj = cache.get_mesh_obj(&tun.model_file);
   scene.set_texture_stash(mesh_obj.textures.clone());
   for mesh in mesh_obj.meshes.iter() {
-    let mesh = WorldMesh::from(mesh.clone())
-      .transformed(rotation)
-      .transformed(translation)
-      .double_faced(tun.double_faced);
+    let mesh = WorldMesh::from(mesh.clone()).double_faced(tun.double_faced);
     scene.add_mesh(mesh);
   }
 
   scene.add_light(Light::new(
-    Point3::new(5.0, 10.0, 5.0),
+    Point3::new(1.0, 3.0, 1.0),
     COLOR::rgb(1.0, 1.0, 1.0),
   ));
 

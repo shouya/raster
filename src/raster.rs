@@ -89,6 +89,13 @@ impl<T> Image<T> {
     self.pixels.iter_mut()
   }
 
+  pub fn as_ref(&self) -> Image<&T> {
+    Image {
+      dimension: self.dimension,
+      pixels: self.pixels.iter().collect(),
+    }
+  }
+
   pub fn pixel(&self, coords: (i32, i32)) -> Option<&T> {
     if coords.0 < 0
       || coords.1 < 0
@@ -1095,6 +1102,10 @@ impl ShadowVolume {
     }
   }
 
+  pub fn face_count(&self) -> usize {
+    self.volume.len()
+  }
+
   pub fn add_face(&mut self, face: &Face<Pt>, camera: &Camera, light: &Light) {
     for line in face.edges() {
       let p1 = line.a();
@@ -1102,12 +1113,13 @@ impl ShadowVolume {
       let p1_far = light.project(&p1.world_pos, self.shadow_distance);
       let p2_far = light.project(&p2.world_pos, self.shadow_distance);
 
-      let face = [
+      let face: Face<Point3> = [
         camera.project_point(&p1.world_pos),
         camera.project_point(&p2.world_pos),
         camera.project_point(&p2_far),
         camera.project_point(&p1_far),
-      ];
+      ]
+      .into();
 
       self.volume.push(Face::from(face));
     }
@@ -1145,6 +1157,7 @@ pub struct Rasterizer<'a> {
   metric: RasterizerMetric,
   shader_options: ShaderOptions,
   render_shadow: bool,
+  stencil_buffer: Option<Image<i32>>,
 }
 
 impl<'a> Rasterizer<'a> {
@@ -1165,6 +1178,7 @@ impl<'a> Rasterizer<'a> {
       mode,
       metric,
       shader_options,
+      stencil_buffer: None,
       render_shadow: false,
     }
   }
@@ -1241,6 +1255,8 @@ impl<'a> Rasterizer<'a> {
         self.fill_trig_in_stencil_buffer(trig, sign, &mut stencil_buffer);
       }
     }
+
+    self.stencil_buffer = Some(stencil_buffer);
   }
 
   #[inline(never)]
@@ -1339,6 +1355,17 @@ impl<'a> Rasterizer<'a> {
     self.zbuffer.clone().map(to_color)
   }
 
+  pub fn stencil_buffer_image(&self) -> Image<Color> {
+    let size = self.size_usize();
+    let default_image = Image::new_filled(size, 0);
+    let image = self.stencil_buffer.as_ref().unwrap_or(&default_image);
+    let to_color = |v: &i32| {
+      let c = *v as f32 / 20.0 + 0.5;
+      COLOR::rgb(c, c, c)
+    };
+    image.as_ref().map(to_color)
+  }
+
   pub fn metric(&self) -> RasterizerMetric {
     self.metric.clone()
   }
@@ -1430,6 +1457,10 @@ impl<'a> Rasterizer<'a> {
 
   fn size(&self) -> (i32, i32) {
     (self.size.0 as i32, self.size.1 as i32)
+  }
+
+  fn size_usize(&self) -> (usize, usize) {
+    (self.size.0 as usize, self.size.1 as usize)
   }
 }
 

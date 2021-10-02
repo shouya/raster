@@ -37,6 +37,7 @@ use crate::{
 pub struct RenderResult {
   pub image: Image<Color>,
   pub zbuf_image: Image<Color>,
+  pub stencil_image: Image<Color>,
   pub metric: RasterizerMetric,
 }
 
@@ -115,7 +116,7 @@ impl Default for Tunable {
       shader_options: Default::default(),
       mode: RasterizerMode::Shaded,
       zbuffer_mode: false,
-      model_file: "assets/chair.obj".into(),
+      model_file: "assets/chair_low_resolution.obj".into(),
       double_faced: false,
       super_sampling: 1.0,
       render_shadow: true
@@ -362,7 +363,8 @@ impl RasterApp {
 
     let image_size = result.image.size();
     let texture_data = if self.tunable.zbuffer_mode {
-      convert_texture(&result.zbuf_image)
+      // convert_texture(&result.zbuf_image)
+      convert_texture(&result.stencil_image)
     } else {
       convert_texture(&result.image)
     };
@@ -533,6 +535,7 @@ fn render_scene(
   RenderResult {
     metric: raster.metric(),
     zbuf_image: raster.zbuffer_image(),
+    stencil_image: raster.stencil_buffer_image(),
     image: raster.into_image(),
   }
 }

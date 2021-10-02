@@ -1173,7 +1173,8 @@ impl ShadowVolume {
 pub struct Rasterizer<'a> {
   size: (f32, f32),
   mode: RasterizerMode,
-  zbuffer: Image<f32>,
+  // smaller value = closer to camera; range: [-1, 1]
+  zbuffer: Image<Option<f32>>,
   image: Image<Option<Pt>>,
   pixel_shader: Image<Option<&'a dyn Shader>>,
   metric: RasterizerMetric,
@@ -1186,7 +1187,7 @@ impl<'a> Rasterizer<'a> {
   pub fn new(size: (usize, usize)) -> Self {
     let image = Image::new_filled(size, None);
     let pixel_shader = Image::new_filled(size, None);
-    let zbuffer = Image::new_filled(size, 1.01);
+    let zbuffer = Image::new_filled(size, None);
     let mode = RasterizerMode::Shaded;
     let size = (image.width() as f32, image.height() as f32);
     let metric = Default::default();
@@ -1273,8 +1274,9 @@ impl<'a> Rasterizer<'a> {
     let mut stencil_buffer = Image::new_filled(size, 0);
 
     for face in volume.faces() {
+      let sign = if face.is_hidden() { 1 } else { -1 };
       for trig in face.triangulate() {
-        self.fill_trig_in_stencil_buffer(trig, &mut stencil_buffer);
+        self.fill_trig_in_stencil_buffer(trig, sign, &mut stencil_buffer);
       }
     }
 
@@ -1285,6 +1287,7 @@ impl<'a> Rasterizer<'a> {
   fn fill_trig_in_stencil_buffer(
     &self,
     trig: Trig<Point3>,
+    sign: i32,
     buffer: &mut Image<i32>,
   ) {
     let (w, h) = self.size();
@@ -1300,14 +1303,10 @@ impl<'a> Rasterizer<'a> {
         }
 
         let coords = (x, y);
-        let depth = *self.zbuffer.pixel(coords).unwrap();
-
-        if depth <= 1.0 && pt.z < depth {
-          let pixel = buffer.pixel_mut(coords).unwrap();
-          if *pixel == 1 {
-            *pixel = 0;
-          } else {
-            *pixel = 1;
+        if let Some(depth) = *self.zbuffer.pixel(coords).unwrap() {
+          if pt.z <= depth {
+            let pixel = buffer.pixel_mut(coords).unwrap();
+            *pixel += sign;
           }
         }
       }
@@ -1386,7 +1385,7 @@ impl<'a> Rasterizer<'a> {
   }
 
   pub fn zbuffer_image(&self) -> Image<Color> {
-    let to_comp = |d| (d + 1.0) / 2.0;
+    let to_comp = |d: Option<f32>| (d.unwrap_or(2.0) + 1.0) / 2.0;
     let to_color = |d| COLOR::rgb(to_comp(d), to_comp(d), to_comp(d));
     self.zbuffer.clone().map(to_color)
   }
@@ -1432,19 +1431,18 @@ impl<'a> Rasterizer<'a> {
     }
 
     let coords = (x, y);
-    match self.zbuffer.pixel(coords) {
-      None => return,
+    match self.zbuffer.pixel(coords).unwrap() {
       Some(d) if pt.depth() >= *d => {
         self.metric.pixels_discarded += 1;
         return;
       }
-      Some(_) => {
+      None | Some(_) => {
         self.metric.pixels_shaded += 1;
 
         self.image.put_pixel(coords, Some(pt));
         self.pixel_shader.put_pixel(coords, Some(shader));
 
-        self.zbuffer.put_pixel(coords, pt.depth());
+        self.zbuffer.put_pixel(coords, Some(pt.depth()));
       }
     }
   }

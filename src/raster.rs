@@ -1119,7 +1119,7 @@ impl ShadowVolume {
   pub fn new() -> Self {
     Self {
       volume: vec![],
-      shadow_distance: 0.5,
+      shadow_distance: 1000.0,
     }
   }
 
@@ -1132,12 +1132,14 @@ impl ShadowVolume {
       let p1 = line.a().world_pos;
       let p2 = line.b().world_pos;
 
+      let p1_near = light.project(&p1, 0.0001);
+      let p2_near = light.project(&p2, 0.0001);
       let p1_far = light.project(&p1, self.shadow_distance);
       let p2_far = light.project(&p2, self.shadow_distance);
 
       let face: Face<Point3> = [
-        camera.project_point(&p1),
-        camera.project_point(&p2),
+        camera.project_point(&p1_near),
+        camera.project_point(&p2_near),
         camera.project_point(&p2_far),
         camera.project_point(&p1_far),
       ]
@@ -1304,7 +1306,7 @@ impl<'a> Rasterizer<'a> {
 
         let coords = (x, y);
         if let Some(depth) = *self.zbuffer.pixel(coords).unwrap() {
-          if pt.z <= depth {
+          if pt.z < depth {
             let pixel = buffer.pixel_mut(coords).unwrap();
             *pixel += sign;
           }
@@ -1319,7 +1321,7 @@ impl<'a> Rasterizer<'a> {
     for (coords, pixel) in self.image.pixels_mut_with_coords() {
       if let Some(pt) = pixel {
         let stencil_value = stencil_buffer.pixel(coords).unwrap();
-        pt.in_shadow = Some(*stencil_value == 1);
+        pt.in_shadow = Some(*stencil_value != 0);
       }
     }
   }

@@ -1,8 +1,10 @@
 use std::{
+  cell::RefCell,
   collections::HashMap,
   f32::consts::PI,
   fs::read_dir,
   path::{Path, PathBuf},
+  rc::Rc,
 };
 
 use eframe::{
@@ -19,7 +21,7 @@ use raster::{
   WorldMesh, COLOR,
 };
 use shader::{Light, ShaderOptions};
-use wavefront::MeshObject;
+use wavefront::{MeshObject};
 
 mod lerp;
 mod raster;
@@ -42,21 +44,22 @@ pub struct RenderResult {
 }
 
 struct SceneCache {
-  stash: HashMap<PathBuf, MeshObject>,
+  stash: RefCell<HashMap<PathBuf, Rc<MeshObject>>>,
 }
 
 impl SceneCache {
   fn new() -> Self {
     Self {
-      stash: HashMap::new(),
+      stash: RefCell::new(HashMap::new()),
     }
   }
 
-  fn get_mesh_obj<'a>(&'a mut self, path: &Path) -> &'a MeshObject {
-    self
-      .stash
+  fn get_mesh_obj(&self, path: &Path) -> Rc<MeshObject> {
+    let mut stash = self.stash.borrow_mut();
+    stash
       .entry(path.to_path_buf())
-      .or_insert_with(move || Self::load_wavefront_meshes(path))
+      .or_insert_with(move || Rc::new(Self::load_wavefront_meshes(path)))
+      .clone()
   }
 
   fn load_wavefront_meshes(path: &Path) -> MeshObject {
@@ -101,7 +104,7 @@ pub struct Tunable {
   double_faced: bool,
   shader_options: ShaderOptions,
   super_sampling: f32,
-  render_shadow: bool
+  render_shadow: bool,
 }
 
 impl Default for Tunable {
@@ -119,7 +122,7 @@ impl Default for Tunable {
       model_file: "assets/chair_low_resolution.obj".into(),
       double_faced: false,
       super_sampling: 1.0,
-      render_shadow: true
+      render_shadow: true,
     }
   }
 }
@@ -540,7 +543,7 @@ fn render_scene(
   }
 }
 
-fn sample_scene<'a>(tun: &'a Tunable, cache: &'a mut SceneCache) -> Scene<'a> {
+fn sample_scene(tun: &Tunable, cache: &SceneCache) -> Scene {
   let fov = tun.fov / 360.0 * PI;
   let zfar = if tun.znear == tun.zfar {
     // avoid znear == zfar
@@ -566,9 +569,9 @@ fn sample_scene<'a>(tun: &'a Tunable, cache: &'a mut SceneCache) -> Scene<'a> {
     Mat4::from_euler(EulerRot::XYZ, tun.rot[0], tun.rot[1], tun.rot[2]);
 
   let mesh_obj = cache.get_mesh_obj(&tun.model_file);
-  scene.set_texture_stash(&mesh_obj.textures);
+  scene.set_texture_stash(mesh_obj.textures.clone());
   for mesh in mesh_obj.meshes.iter() {
-    let mesh = WorldMesh::from(mesh)
+    let mesh = WorldMesh::from(mesh.clone())
       .transformed(rotation)
       .transformed(translation)
       .double_faced(tun.double_faced);
@@ -579,6 +582,10 @@ fn sample_scene<'a>(tun: &'a Tunable, cache: &'a mut SceneCache) -> Scene<'a> {
     Point3::new(5.0, 10.0, 5.0),
     COLOR::rgb(1.0, 1.0, 1.0),
   ));
+
+  let light_mesh_path = PathBuf::from("assets/icosphere.obj");
+  let light_mesh = cache.get_mesh_obj(&light_mesh_path);
+  scene.visualize_light(light_mesh.meshes[0].clone());
 
   scene
 }

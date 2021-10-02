@@ -1,11 +1,13 @@
-use std::{collections::HashMap, fs::File, io::Read, path::Path, str::FromStr};
+use std::{
+  collections::HashMap, fs::File, io::Read, path::Path, rc::Rc, str::FromStr,
+};
 
 use anyhow::{ensure, Result};
 
 use crate::{
   raster::{Color, Face, Image, IndexedPolyVert, COLOR},
-  shader::{SimpleMaterial, TextureStash},
-  types::{Point3, Vector2, Vector3, Mat4},
+  shader::{Shader, SimpleMaterial, TextureStash},
+  types::{Mat4, Point3, Vector2, Vector3},
 };
 
 struct Mtl {
@@ -83,13 +85,35 @@ impl Mtl {
   }
 }
 
-#[derive(Clone, Default, Debug)]
+#[derive(Default)]
 pub struct Mesh {
-  pub material: Option<SimpleMaterial>,
+  pub material: Option<Box<dyn Shader>>,
   pub vertices: Vec<Point3>,
   pub vertex_normals: Vec<Vector3>,
   pub texture_coords: Vec<Vector2>,
   pub faces: Vec<Face<IndexedPolyVert>>,
+}
+
+impl Clone for Mesh {
+  fn clone(&self) -> Mesh {
+    let Mesh {
+      material,
+      vertices,
+      vertex_normals,
+      texture_coords,
+      faces,
+    } = self;
+
+    let material = material.as_ref().map(|x| dyn_clone::clone_box(&**x));
+
+    Mesh {
+      material,
+      vertices: vertices.clone(),
+      vertex_normals: vertex_normals.clone(),
+      texture_coords: texture_coords.clone(),
+      faces: faces.clone(),
+    }
+  }
 }
 
 impl Mesh {
@@ -121,10 +145,12 @@ impl Mesh {
       .map(|v| matrix.transform_vector3a(*v))
       .collect();
 
+    let material = self.material.as_ref().map(|x| dyn_clone::clone_box(&**x));
+
     Self {
       vertices,
       vertex_normals,
-      material: self.material.clone(),
+      material,
       texture_coords: self.texture_coords.clone(),
       faces: self.faces.clone(),
     }
@@ -180,7 +206,7 @@ impl Obj {
           }
           // it's okay that the material is not found
           if let Ok(mat) = obj.mtl.get(m) {
-            curr_mesh.material = Some(mat);
+            curr_mesh.material = Some(Box::new(mat));
           }
         }
         _ => {}
@@ -279,14 +305,14 @@ fn parse_texture_color(
 }
 
 pub struct MeshObject {
-  pub meshes: Vec<Mesh>,
-  pub textures: TextureStash,
+  pub meshes: Vec<Rc<Mesh>>,
+  pub textures: Rc<TextureStash>,
 }
 
 pub fn load(path: &Path) -> Result<MeshObject> {
   let obj = Obj::load(path)?;
   Ok(MeshObject {
-    textures: obj.mtl.textures,
-    meshes: obj.objs,
+    textures: Rc::new(obj.mtl.textures),
+    meshes: obj.objs.into_iter().map(|x| Rc::new(x)).collect(),
   })
 }

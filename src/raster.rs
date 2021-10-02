@@ -1,4 +1,4 @@
-use std::{borrow::Cow, time::Instant};
+use std::{rc::Rc, time::Instant};
 
 use approx::abs_diff_eq;
 use smallvec::{smallvec, SmallVec};
@@ -837,31 +837,31 @@ pub struct PolyVert<'a> {
   pub normal: Option<&'a Vector3>,
 }
 
-#[derive(Debug, Clone)]
-pub struct WorldMesh<'a> {
+#[derive(Clone)]
+pub struct WorldMesh {
   pub transform: Option<Mat4>,
   pub double_faced: bool,
   pub casts_shadow: bool,
-  pub mesh: Cow<'a, Mesh>,
+  pub mesh: Rc<Mesh>,
 }
 
-impl<'a> From<&'a Mesh> for WorldMesh<'a> {
-  fn from(mesh: &'a Mesh) -> Self {
+impl From<Rc<Mesh>> for WorldMesh {
+  fn from(mesh: Rc<Mesh>) -> Self {
     Self {
+      mesh,
       transform: None,
-      mesh: Cow::Borrowed(mesh),
       double_faced: false,
       casts_shadow: true,
     }
   }
 }
 
-impl<'a> WorldMesh<'a> {
+impl WorldMesh {
   #[allow(unused)]
   pub fn new() -> Self {
     Self {
       transform: None,
-      mesh: Default::default(),
+      mesh: Rc::new(Default::default()),
       double_faced: false,
       casts_shadow: true,
     }
@@ -917,15 +917,16 @@ impl<'a> WorldMesh<'a> {
       .mesh
       .material
       .as_ref()
+      .map(|x| x.as_ref())
       .unwrap_or_else(|| SimpleMaterial::plaster())
   }
 
   pub fn apply_transformation(&self) -> Self {
     match self.transform {
       Some(transform) => {
-        let mesh = Cow::Owned(self.mesh.apply_transformation(&transform));
+        let mesh = self.mesh.apply_transformation(&transform);
         Self {
-          mesh,
+          mesh: Rc::new(mesh),
           transform: None,
           double_faced: self.double_faced,
           casts_shadow: self.casts_shadow,
@@ -936,25 +937,25 @@ impl<'a> WorldMesh<'a> {
   }
 }
 
-pub struct Scene<'a> {
-  textures: Cow<'a, TextureStash>,
+pub struct Scene {
+  textures: Rc<TextureStash>,
   camera: Camera,
   lights: Vec<Light>,
-  meshes: Vec<WorldMesh<'a>>,
+  meshes: Vec<WorldMesh>,
 }
 
-impl<'a> Scene<'a> {
+impl Scene {
   pub fn new(camera: Camera) -> Self {
     Self {
       camera,
-      textures: Cow::Owned(TextureStash::new()),
+      textures: Rc::new(TextureStash::new()),
       lights: vec![],
       meshes: vec![],
     }
   }
 
-  pub fn set_texture_stash(&mut self, textures: &'a TextureStash) {
-    self.textures = Cow::Borrowed(textures);
+  pub fn set_texture_stash(&mut self, textures: Rc<TextureStash>) {
+    self.textures = textures;
   }
 
   pub fn texture_stash(&self) -> &TextureStash {
@@ -965,17 +966,21 @@ impl<'a> Scene<'a> {
     self.lights.push(light);
   }
 
-  pub fn add_mesh(&mut self, mesh: WorldMesh<'a>) {
+  pub fn add_mesh(&mut self, mesh: WorldMesh) {
     self.meshes.push(mesh);
   }
 
-  #[allow(unused)]
-  pub fn add_meshes(&mut self, mesh: &[WorldMesh<'a>]) {
-    self.meshes.extend_from_slice(mesh);
+  pub fn visualize_light(&mut self, mesh: Rc<Mesh>) {
+    let lights = &self.lights;
+    let meshes = &mut self.meshes;
+
+    for light in lights {
+      meshes.push(light.to_world_mesh(mesh.clone()).clone());
+    }
   }
 
   pub fn iter_meshes(&self) -> impl Iterator<Item = &WorldMesh> + '_ {
-    self.meshes.iter()
+    self.meshes.iter().map(|x| x)
   }
 
   pub fn camera(&self) -> &Camera {

@@ -1,9 +1,13 @@
+use std::rc::Rc;
+
+use dyn_clone::DynClone;
 use lazy_static::lazy_static;
 
 use crate::{
-  raster::{Color, Image, Pt, COLOR},
+  raster::{Color, Image, Pt, WorldMesh, COLOR},
   types::{Mat4, Point3, Vector2, Vector3, Vector4},
   util::reflect,
+  wavefront::Mesh,
 };
 
 pub type TextureHandle = usize;
@@ -53,6 +57,15 @@ impl Light {
     let dir = (*pt - self.pos).normalize();
     *pt + dir * distance
   }
+
+  pub fn to_world_mesh(&self, mesh: Rc<Mesh>) -> WorldMesh {
+    const SCALE: f32 = 0.1;
+    WorldMesh::from(mesh)
+      .transformed(Mat4::from_translation(self.pos.into()))
+      .transformed(Mat4::from_scale(Vector3::new(SCALE, SCALE, SCALE).into()))
+      .double_faced(true)
+      .casts_shadow(false)
+  }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -92,14 +105,17 @@ impl<'a> ShaderContext<'a> {
   }
 }
 
-pub trait Shader {
+pub trait Shader: DynClone {
   fn vertex(&self, context: &ShaderContext, pt: &mut Pt) {
     pt.clip_pos = context.camera.project_point3(pt.world_pos.into()).into();
   }
 
   fn fragment(&self, context: &ShaderContext, pt: &mut Pt);
+
 }
 
+
+#[derive(Clone)]
 pub struct PureColor {
   color: Color,
 }
@@ -117,6 +133,7 @@ impl Shader for PureColor {
   }
 }
 
+#[derive(Clone)]
 pub struct DiffuseShader {
   color: Color,
   light: Color,
@@ -147,6 +164,7 @@ impl Shader for DiffuseShader {
   }
 }
 
+#[derive(Clone)]
 pub struct SpecularShader {
   light: Color,
   light_pos: Point3,

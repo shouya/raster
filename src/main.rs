@@ -91,6 +91,13 @@ impl Default for RasterApp {
   }
 }
 
+#[derive(PartialEq)]
+pub enum ImageMode {
+  Rendered,
+  DepthBuffer,
+  StencilBuffer,
+}
+
 pub struct Tunable {
   distance: f32,
   fov: f32,
@@ -99,7 +106,7 @@ pub struct Tunable {
   rot: [f32; 3],
   trans: [f32; 3],
   mode: RasterizerMode,
-  zbuffer_mode: bool,
+  image_mode: ImageMode,
   model_file: PathBuf,
   double_faced: bool,
   shader_options: ShaderOptions,
@@ -118,11 +125,11 @@ impl Default for Tunable {
       trans: [0.0, 0.0, 4.4579],
       shader_options: Default::default(),
       mode: RasterizerMode::Shaded,
-      zbuffer_mode: false,
+      image_mode: ImageMode::Rendered,
       model_file: "assets/chair_low_resolution.obj".into(),
       double_faced: false,
       super_sampling: 1.0,
-      render_shadow: true,
+      render_shadow: false,
     }
   }
 }
@@ -230,13 +237,31 @@ impl RasterApp {
       }
     });
 
-    let t = &mut self.tunable;
-    if ui.checkbox(&mut t.zbuffer_mode, "Z-buffer mode").changed() {
+    if ui
+      .checkbox(&mut self.tunable.render_shadow, "Render shadow")
+      .changed()
+    {
       self.redraw = true;
     }
 
+    use ImageMode::*;
+    let image_modes = [
+      (Rendered, "Rendered"),
+      (DepthBuffer, "Depth"),
+      (StencilBuffer, "Stencil"),
+    ];
+
+    ui.horizontal(|ui| {
+      let t = &mut self.tunable.image_mode;
+      for (mode, text) in image_modes {
+        if ui.radio_value(t, mode, text).clicked() {
+          self.redraw = true;
+        }
+      }
+    });
+
     if ui
-      .checkbox(&mut t.double_faced, "Double-faced mesh")
+      .checkbox(&mut self.tunable.double_faced, "Double-faced mesh")
       .changed()
     {
       self.redraw = true;
@@ -365,12 +390,12 @@ impl RasterApp {
     }
 
     let image_size = result.image.size();
-    let texture_data = if self.tunable.zbuffer_mode {
-      // convert_texture(&result.zbuf_image)
-      convert_texture(&result.stencil_image)
-    } else {
-      convert_texture(&result.image)
+    let texture = match self.tunable.image_mode {
+      ImageMode::Rendered => &result.image,
+      ImageMode::StencilBuffer => &result.stencil_image,
+      ImageMode::DepthBuffer => &result.zbuf_image,
     };
+    let texture_data = convert_texture(&texture);
 
     let texture_id =
       tex_alloc.alloc_srgba_premultiplied(image_size, texture_data.as_slice());

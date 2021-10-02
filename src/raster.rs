@@ -1397,7 +1397,13 @@ impl<'a> Rasterizer<'a> {
     let default_image = Image::new_filled(size, 0);
     let image = self.stencil_buffer.as_ref().unwrap_or(&default_image);
     let to_color = |v: &i32| {
-      let c = *v as f32 / 20.0 + 0.5;
+      let c = if *v < 0 {
+        1.0
+      } else if *v > 0 {
+        0.0
+      } else {
+        0.5
+      };
       COLOR::rgb(c, c, c)
     };
     image.as_ref().map(to_color)

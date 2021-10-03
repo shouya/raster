@@ -4,7 +4,9 @@ This project is my attempt to learn rendering technique by crafting a 3d rasteri
 
 The program is an interactive GUI application capable of rendering model files exported in Wavefront format (=.obj=). You can explore the various rasterizer options by interacting with the GUI.
 
-The rasterizer runs purely on CPU, and no parallelism is added so far. Although I've implemented various technique to make it as performant as possible. It is still not feasible for any practical purpose.
+The rasterizer runs purely on CPU, and no parallelism is added so far. Although I've employed various techniques to improve performance, the rendering is still too slow for any practical purpose.
+
+You may also be interested in my other computer graphics project - a ray-tracer written from scratch: [[https://github.com/shouya/ray][ray]].
 
 ** Features
 
@@ -16,6 +18,8 @@ Please note that not all features can be explored via the GUI.
   + Multiple lamp support
 - Mesh
   + Single/double-faced
+  + World transformation
+  + Optionally cast shadow
 - Shader
   + Preset shaders: =PureColor=, =DiffuseShader=, =SpecularShader=, =SimpleMaterial=
   + Custom shader via =trait Shader=
@@ -30,7 +34,7 @@ Please note that not all features can be explored via the GUI.
     - Wireframe
     - Clipped triangles visualization
     - Shadow volume visualization
-- Wavefronnt model (=.obj=) loading
+- Wavefront model (=.obj=) loading
   + Material support (=.mtl=)
   + Color texture support
   + Bump map (pending)
@@ -52,6 +56,7 @@ Camera controls:
 
 - transparency support
 - bump map
+- build executable binaries from CI
 
 ** Building
 

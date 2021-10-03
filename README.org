@@ -1,0 +1,70 @@
+* Toy rasterizer
+
+This project is my attempt to learn rendering technique by crafting a 3d rasterizer from scratch.
+
+The program is an interactive GUI application capable of rendering model files exported in Wavefront format (=.obj=). You can explore the various rasterizer options by interacting with the GUI.
+
+The rasterizer runs purely on CPU, and no parallelism is added so far. Although I've implemented various technique to make it as performant as possible. It is still not feasible for any practical purpose.
+
+** Features
+
+*** Supported features
+
+Please note that not all features can be explored via the GUI.
+
+- Lamp (color and position)
+  + Multiple lamp support
+- Mesh
+  + Single/double-faced
+- Shader
+  + Preset shaders: =PureColor=, =DiffuseShader=, =SpecularShader=, =SimpleMaterial=
+  + Custom shader via =trait Shader=
+- Basic shadow support
+- Texture
+  + Bi-linear filter
+  + Nearest-pixel filter
+- Rasterizer
+  + Rasterization and shading pass separation
+  + Multiple render modes
+    - Shaded (normal)
+    - Wireframe
+    - Clipped triangles visualization
+    - Shadow volume visualization
+- Wavefronnt model (=.obj=) loading
+  + Material support (=.mtl=)
+  + Color texture support
+  + Bump map (pending)
+  + Multi object/multi material in a single =obj= file
+
+*** UI features
+
+See the screenshot.
+
+[[./static/ui.png?raw=true]]
+
+Camera controls:
+
+- Rotation: dragging (left mouse button)
+- Pan: dragging (middle mouse button)
+- Zoom: scroll wheel
+
+*** Planned features
+
+- transparency support
+- bump map
+
+** Building
+
+1. Clone this repository
+2. Run =cargo run --release=
+
+The UI is based on [[https://github.com/emilk/egui/tree/master/egui_glium][egui_glium]]. Make sure you have all its dependencies installed.
+
+** References
+
+- [[https://gabrielgambetta.com/computer-graphics-from-scratch/][Computer Graphics from Scratch by Gabriel Gambetta]]
+- [[https://en.wikipedia.org/wiki/Shadow_volume][Shadow volume - Wikipedia]]
+
+** License
+
+GPL-2.0

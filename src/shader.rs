@@ -62,7 +62,7 @@ impl Light {
     WorldMesh::from(mesh)
       .transformed(Mat4::from_scale(Vector3::new(SCALE, SCALE, SCALE).into()))
       .transformed(Mat4::from_translation(self.pos.into()))
-      .set_shader(Rc::new(PureColor::new(self.color)))
+      .set_shader(PureColor::new(self.color))
       .double_faced(true)
       .casts_shadow(false)
   }
@@ -108,6 +108,7 @@ impl<'a> ShaderContext<'a> {
 pub trait Shader: DynClone {
   fn vertex(&self, context: &ShaderContext, pt: &mut Pt) {
     pt.clip_pos = context.camera.project_point3(pt.world_pos.into()).into();
+    // TODO: texture coordinates perspective correction
   }
 
   fn fragment(&self, context: &ShaderContext, pt: &mut Pt);
@@ -308,8 +309,8 @@ impl Shader for SimpleMaterial {
 }
 
 impl SimpleMaterial {
-  pub fn plaster() -> Rc<SimpleMaterial> {
-    let material = SimpleMaterial {
+  pub fn plaster() -> SimpleMaterial {
+    SimpleMaterial {
       name: String::from("plaster"),
       specular_highlight: 4.0,
       specular_color: COLOR::rgb(1.0, 1.0, 1.0),
@@ -317,8 +318,6 @@ impl SimpleMaterial {
       diffuse_color: COLOR::rgb(1.0, 1.0, 1.0),
       dissolve: 1.0,
       color_texture: None,
-    };
-
-    Rc::new(material)
+    }
   }
 }

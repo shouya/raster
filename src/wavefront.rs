@@ -161,8 +161,8 @@ impl Mesh {
     }
   }
 
-  pub fn set_material(&mut self, material: Rc<dyn Shader>) {
-    self.material = Some(material);
+  pub fn set_material(&mut self, material: impl Shader + 'static) {
+    self.material = Some(Rc::new(material));
   }
 }
 

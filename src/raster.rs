@@ -889,6 +889,17 @@ impl From<Rc<Mesh>> for WorldMesh {
   }
 }
 
+impl From<Mesh> for WorldMesh {
+  fn from(mesh: Mesh) -> Self {
+    Self {
+      mesh: Rc::new(mesh),
+      transform: None,
+      double_faced: false,
+      casts_shadow: true,
+    }
+  }
+}
+
 impl WorldMesh {
   #[allow(unused)]
   pub fn new() -> Self {
@@ -915,7 +926,7 @@ impl WorldMesh {
     self.mesh.faces.iter().map(move |f| self.get_face(f))
   }
 
-  pub fn set_shader(mut self, shader: Rc<dyn Shader>) -> Self {
+  pub fn set_shader(mut self, shader: impl Shader + 'static) -> Self {
     // notice: make_mut will clone a new instance of Rc
     Rc::make_mut(&mut self.mesh).set_material(shader);
     self
@@ -957,7 +968,7 @@ impl WorldMesh {
       .material
       .as_ref()
       .map(|x| x.clone())
-      .unwrap_or_else(|| SimpleMaterial::plaster())
+      .unwrap_or_else(|| Rc::new(SimpleMaterial::plaster()))
   }
 
   pub fn apply_transformation(&self) -> Self {
@@ -1216,8 +1227,8 @@ impl ShadowVolume {
       mesh.add_simple_face(face.as_slice())
     }
 
-    WorldMesh::from(Rc::new(mesh))
-      .set_shader(Rc::new(PureColor::new(COLOR::rgb(1.0, 0.0, 0.0))))
+    WorldMesh::from(mesh)
+      .set_shader(PureColor::new(COLOR::rgb(1.0, 0.0, 0.0)))
       .double_faced(true)
       .casts_shadow(false)
   }

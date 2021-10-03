@@ -152,6 +152,13 @@ fn convert_texture(image: &Image<Color>) -> Vec<egui::Color32> {
 
 impl RasterApp {
   fn draw_tunables(&mut self, ui: &mut egui::Ui) {
+    if ui.button("Reset all").clicked() {
+      self.tunable = Default::default();
+      self.redraw = true;
+    }
+
+    ui.separator();
+
     CollapsingHeader::new("Camera control")
       .default_open(true)
       .show(ui, |ui| {
@@ -594,7 +601,7 @@ fn main() {
     bench_render();
   } else {
     let mut options: NativeOptions = Default::default();
-    options.initial_window_size = Some(Vec2::new(900.0, 600.0));
+    options.initial_window_size = Some(Vec2::new(1365.0, 768.0));
     eframe::run_native(Box::new(RasterApp::default()), options);
   }
 }
@@ -639,11 +646,6 @@ fn sample_scene(tun: &Tunable, cache: &SceneCache) -> Scene {
   camera.transformd(&translation.inverse());
   camera.transformd(&rotation.inverse());
 
-  // let rotation = camera
-  //   .matrix()
-  //   .pseudo_inverse(0.001)
-  //   .unwrap()
-  //   .transform_vector(&Vector3::new(tun.rot_horizontal, tun.rot_vertical, 0.0));
   let mut scene = Scene::new(camera);
 
   let mesh_obj = cache.get_mesh_obj(&tun.model_file);

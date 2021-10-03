@@ -1,6 +1,7 @@
 use std::cmp;
 
-use crate::types::Vector3;
+use crate::types::{Vector3};
+
 
 // copied from https://doc.rust-lang.org/src/core/num/f32.rs.html#959
 pub fn f32_cmp(a: &f32, b: &f32) -> cmp::Ordering {

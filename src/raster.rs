@@ -1,4 +1,4 @@
-use std::{rc::Rc, time::Instant};
+use std::{collections::HashMap, rc::Rc, time::Instant};
 
 use approx::abs_diff_eq;
 use smallvec::{smallvec, SmallVec};
@@ -8,7 +8,7 @@ use crate::{
   shader::{
     Light, Shader, ShaderContext, ShaderOptions, SimpleMaterial, TextureStash,
   },
-  types::{Mat4, Point3, Vector2, Vector3, Vector4},
+  types::{Mat4, Point3, Point3Ord, Vector2, Vector3, Vector4},
   util::f32_cmp,
   wavefront::Mesh,
 };
@@ -240,7 +240,7 @@ impl Camera {
   }
 }
 
-#[derive(Debug, Clone, PartialEq, Hash, Eq)]
+#[derive(Debug, Clone, PartialEq, Hash, Eq, PartialOrd, Ord)]
 pub struct Line<T> {
   ends: [T; 2],
 }
@@ -265,6 +265,14 @@ impl<T> Line<T> {
   }
   pub fn b(&self) -> &T {
     &self.ends[1]
+  }
+
+  // reorder ends
+  pub fn sort_ends(&mut self)
+  where
+    T: Ord,
+  {
+    self.ends.sort()
   }
 
   // The caller needs to ensure "self" is in screen coordinates
@@ -364,6 +372,15 @@ impl<T> Line<T> {
     }
 
     true
+  }
+
+  pub fn map<S, F>(self, f: F) -> Line<S>
+  where
+    F: Fn(T) -> S,
+  {
+    Line {
+      ends: self.ends.map(|x| f(x)),
+    }
   }
 
   pub fn map_in_place<F>(&mut self, f: F)
@@ -1111,6 +1128,11 @@ pub struct RasterizerMetric {
 // the coords of volume are all in clip space
 pub struct ShadowVolume {
   volume: Vec<Face<Point3>>,
+  // key absent: new edge
+  // >0: edge is light facing
+  // <0: edge is light away
+  // =0: edge is silhouette
+  edge_index: HashMap<Line<Point3Ord>, i32>,
   shadow_distance: f32,
 }
 
@@ -1119,6 +1141,7 @@ impl ShadowVolume {
   pub fn new() -> Self {
     Self {
       volume: vec![],
+      edge_index: HashMap::new(),
       shadow_distance: 1000.0,
     }
   }
@@ -1128,7 +1151,18 @@ impl ShadowVolume {
   }
 
   pub fn add_face(&mut self, face: &Face<Pt>, camera: &Camera, light: &Light) {
+    let sign = if face.normal().dot(light.pos().normalize()) < 0.0 {
+      -1
+    } else {
+      1
+    };
+
     for line in face.edges() {
+      let key = self.register_edge(&line, sign);
+      if !self.is_silhouette_edge(&key) {
+        continue;
+      }
+
       let p1 = line.a().world_pos;
       let p2 = line.b().world_pos;
 
@@ -1146,6 +1180,7 @@ impl ShadowVolume {
       .into();
 
       self.volume.push(Face::from(face));
+      self.deregister_edge(&key);
     }
   }
 
@@ -1160,15 +1195,31 @@ impl ShadowVolume {
     }
 
     for face in mesh.faces() {
-      if face.normal().dot(*light.pos()) < 0.0 {
-        continue;
-      }
       self.add_face(&face, camera, light);
     }
   }
 
   pub fn faces(&self) -> impl Iterator<Item = &Face<Point3>> + '_ {
     self.volume.iter()
+  }
+
+  fn register_edge(&mut self, line: &Line<Pt>, sign: i32) -> Line<Point3Ord> {
+    let mut key = line.clone().map(|x| Point3Ord::new(x.world_pos));
+    key.sort_ends();
+
+    let val = self.edge_index.entry(key.clone()).or_insert(0);
+    *val += sign;
+
+    key
+  }
+
+  fn is_silhouette_edge(&self, key: &Line<Point3Ord>) -> bool {
+    let v = self.edge_index.get(key).unwrap_or(&0);
+    *v == 0
+  }
+
+  fn deregister_edge(&mut self, key: &Line<Point3Ord>) {
+    self.edge_index.remove(key);
   }
 }
 

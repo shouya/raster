@@ -1,7 +1,6 @@
 use std::rc::Rc;
 
 use dyn_clone::DynClone;
-use lazy_static::lazy_static;
 
 use crate::{
   raster::{Color, Image, Pt, WorldMesh, COLOR},
@@ -63,7 +62,7 @@ impl Light {
     WorldMesh::from(mesh)
       .transformed(Mat4::from_scale(Vector3::new(SCALE, SCALE, SCALE).into()))
       .transformed(Mat4::from_translation(self.pos.into()))
-      .set_shader(Box::new(PureColor::new(self.color)))
+      .set_shader(Rc::new(PureColor::new(self.color)))
       .double_faced(true)
       .casts_shadow(false)
   }
@@ -112,9 +111,7 @@ pub trait Shader: DynClone {
   }
 
   fn fragment(&self, context: &ShaderContext, pt: &mut Pt);
-
 }
-
 
 #[derive(Clone)]
 pub struct PureColor {
@@ -311,19 +308,17 @@ impl Shader for SimpleMaterial {
 }
 
 impl SimpleMaterial {
-  pub fn plaster() -> &'static Self {
-    lazy_static! {
-      static ref PLASTER: SimpleMaterial = SimpleMaterial {
-        name: String::from("plaster"),
-        specular_highlight: 4.0,
-        specular_color: COLOR::rgb(1.0, 1.0, 1.0),
-        ambient_color: COLOR::rgb(0.3, 0.3, 0.3),
-        diffuse_color: COLOR::rgb(1.0, 1.0, 1.0),
-        dissolve: 1.0,
-        color_texture: None,
-      };
-    }
+  pub fn plaster() -> Rc<SimpleMaterial> {
+    let material = SimpleMaterial {
+      name: String::from("plaster"),
+      specular_highlight: 4.0,
+      specular_color: COLOR::rgb(1.0, 1.0, 1.0),
+      ambient_color: COLOR::rgb(0.3, 0.3, 0.3),
+      diffuse_color: COLOR::rgb(1.0, 1.0, 1.0),
+      dissolve: 1.0,
+      color_texture: None,
+    };
 
-    &PLASTER
+    Rc::new(material)
   }
 }

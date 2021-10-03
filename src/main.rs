@@ -18,7 +18,7 @@ use eframe::{
 use glam::{EulerRot, Quat};
 use raster::{
   Camera, Color, Rasterizer, RasterizerMetric, RasterizerMode, Scene,
-  WorldMesh, COLOR,
+  ShadowMode, WorldMesh, COLOR,
 };
 use shader::{Light, ShaderOptions};
 use wavefront::MeshObject;
@@ -110,7 +110,7 @@ pub struct Tunable {
   double_faced: bool,
   shader_options: ShaderOptions,
   super_sampling: f32,
-  render_shadow: bool,
+  shadow_mode: ShadowMode,
   visualize_light: bool,
   light_pos: [f32; 3],
   light_strength: f32,
@@ -130,7 +130,7 @@ impl Default for Tunable {
       model_file: "assets/chair_low_resolution.obj".into(),
       double_faced: false,
       super_sampling: 1.0,
-      render_shadow: false,
+      shadow_mode: ShadowMode::NoShadow,
       visualize_light: true,
       light_pos: [1.0, 3.0, 1.0],
       light_strength: 1.0,
@@ -281,12 +281,23 @@ impl RasterApp {
   }
 
   fn draw_shader_options(&mut self, ui: &mut egui::Ui) {
+    use ShadowMode::*;
+    let shadow_modes = [
+      (NoShadow, "No shadow"),
+      (RenderShadow, "Render shadow"),
+      (VisualizeShadowVolume, "Visualize shadow volume"),
+    ];
+
+    ui.horizontal(|ui| {
+      let t = &mut self.tunable.shadow_mode;
+      for (mode, text) in shadow_modes {
+        if ui.radio_value(t, mode, text).clicked() {
+          self.redraw = true;
+        }
+      }
+    });
+
     let t = &mut self.tunable;
-
-    if ui.checkbox(&mut t.render_shadow, "Render shadow").changed() {
-      self.redraw = true;
-    }
-
     if ui
       .checkbox(&mut t.double_faced, "Double-faced mesh")
       .changed()
@@ -618,7 +629,7 @@ fn render_scene(
   let mut raster = Rasterizer::new(real_size);
   raster.set_mode(tun.mode);
   raster.set_shader_options(tun.shader_options.clone());
-  raster.set_render_shadow(tun.render_shadow);
+  raster.set_shadow_mode(tun.shadow_mode);
   raster.rasterize(&scene);
 
   RenderResult {

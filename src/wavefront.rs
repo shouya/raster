@@ -87,7 +87,7 @@ impl Mtl {
 
 #[derive(Default)]
 pub struct Mesh {
-  pub material: Option<Box<dyn Shader>>,
+  pub material: Option<Rc<dyn Shader>>,
   pub vertices: Vec<Point3>,
   pub vertex_normals: Vec<Vector3>,
   pub texture_coords: Vec<Vector2>,
@@ -104,7 +104,9 @@ impl Clone for Mesh {
       faces,
     } = self;
 
-    let material = material.as_ref().map(|x| dyn_clone::clone_box(&**x));
+    let material = material
+      .as_ref()
+      .map(|x| Rc::from(dyn_clone::clone_box(&**x)));
 
     Mesh {
       material,
@@ -145,7 +147,10 @@ impl Mesh {
       .map(|v| matrix.transform_vector3a(*v))
       .collect();
 
-    let material = self.material.as_ref().map(|x| dyn_clone::clone_box(&**x));
+    let material = self
+      .material
+      .as_ref()
+      .map(|x| Rc::from(dyn_clone::clone_box(&**x)));
 
     Self {
       vertices,
@@ -156,7 +161,7 @@ impl Mesh {
     }
   }
 
-  pub fn set_material(&mut self, material: Box<dyn Shader>) {
+  pub fn set_material(&mut self, material: Rc<dyn Shader>) {
     self.material = Some(material);
   }
 }
@@ -210,7 +215,7 @@ impl Obj {
           }
           // it's okay that the material is not found
           if let Ok(mat) = obj.mtl.get(m) {
-            curr_mesh.material = Some(Box::new(mat));
+            curr_mesh.material = Some(Rc::new(mat));
           }
         }
         _ => {}

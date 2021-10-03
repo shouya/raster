@@ -57,6 +57,11 @@ Camera controls:
 - transparency support
 - bump map
 - build executable binaries from CI
+- write a doc on guided exploration of various graphics glitches
+  + z-fighting
+  + [[https://stackoverflow.com/questions/3329308/perspective-projection-how-do-i-project-points-which-are-behind-camera][points behind camera projected to weird places]]
+  + [[https://en.wikipedia.org/wiki/Shadow_volume#Depth_pass][camera inside shadow volume]]
+  + [[https://gabrielgambetta.com/computer-graphics-from-scratch/14-textures.html#painting-a-crate][deformed texture under perspective projection]]
 
 ** Building
 

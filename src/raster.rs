@@ -683,8 +683,8 @@ pub trait ToClipSpace {
 
   fn scale_to_screen(&mut self, (w, h): (f32, f32)) {
     let p = self.to_clip_mut();
-    p.x = 0.5 * w * (p.x + 1.0);
-    p.y = 0.5 * h * (1.0 - p.y);
+    p.x = 0.5 * (w - 1.0) * (p.x + 1.0);
+    p.y = 0.5 * (h - 1.0) * (1.0 - p.y);
   }
 }
 
@@ -916,7 +916,6 @@ impl WorldMesh {
     self
   }
 
-  #[allow(unused)]
   pub fn casts_shadow(mut self, casts_shadow: bool) -> Self {
     self.casts_shadow = casts_shadow;
     self
@@ -927,19 +926,19 @@ impl WorldMesh {
   }
 
   pub fn set_shader(mut self, shader: impl Shader + 'static) -> Self {
-    // notice: make_mut will clone a new instance of Rc
+    // notice: make_mut will clone a new instance of the shader
     Rc::make_mut(&mut self.mesh).set_material(shader);
     self
   }
 
-  // Return faces in world world coordinates
+  // Return faces in world coordinates
   pub fn faces(&self) -> impl Iterator<Item = Face<Pt>> + '_ {
     self
       .mesh_faces()
       .map(move |face| face.map(|vert| Pt::from(&vert)))
   }
 
-  pub fn get_face(&self, face: &Face<IndexedPolyVert>) -> Face<PolyVert<'_>> {
+  fn get_face(&self, face: &Face<IndexedPolyVert>) -> Face<PolyVert<'_>> {
     let mut res = Face::new(self.double_faced);
     let mesh = &self.mesh;
     for vert in face.vertices() {
@@ -1183,14 +1182,14 @@ impl ShadowVolume {
       let p1 = line.a().world_pos;
       let p2 = line.b().world_pos;
 
-      let p1_near = light.project(&p1, 0.0001);
-      let p2_near = light.project(&p2, 0.0001);
+      // let p1_near = light.project(&p1, 0.0001);
+      // let p2_near = light.project(&p2, 0.0001);
       let p1_far = light.project(&p1, self.shadow_distance);
       let p2_far = light.project(&p2, self.shadow_distance);
 
       let face: Face<Point3> = [
-        camera.project_point(&p1_near),
-        camera.project_point(&p2_near),
+        camera.project_point(&p1),
+        camera.project_point(&p2),
         camera.project_point(&p2_far),
         camera.project_point(&p1_far),
       ]
@@ -1322,7 +1321,7 @@ impl Rasterizer {
       ShadowMode::VisualizeShadowVolume => {
         let mut shadow_volume = ShadowVolume::new();
         self.rasterize_pixels_with_shadow(scene, &mut shadow_volume);
-        self.rasterize_shadow_volume(scene, &shadow_volume);
+        self.rasterize_shadow_volume(&shadow_volume);
       }
     }
 
@@ -1445,16 +1444,15 @@ impl Rasterizer {
 
   fn rasterize_shadow_volume(
     &mut self,
-    scene: &Scene,
     shadow_volume: &ShadowVolume,
   ) {
     let shadow_mesh = shadow_volume.to_world_mesh();
-
-    let context = self.shader_context(scene);
     let shader = shadow_mesh.shader();
 
     for mut face in shadow_mesh.faces() {
-      face.map_in_place(|mut p| shader.vertex(&context, &mut p));
+      // make sure shadow volume is drawn above the actual mesh
+      face.map_in_place(|p| p.clip_pos.z -= 0.000001);
+
       self.metric.vertices_shaded += face.len();
 
       // draw wireframe

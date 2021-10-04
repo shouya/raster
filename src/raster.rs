@@ -3,16 +3,10 @@ use std::{collections::HashMap, rc::Rc, time::Instant};
 use approx::abs_diff_eq;
 use smallvec::{smallvec, SmallVec};
 
-use crate::{
-  lerp::{lerp, lerp_closed_iter, Lerp},
-  shader::{
+use crate::{lerp::{lerp, lerp_closed_iter, Lerp}, shader::{
     Light, PureColor, Shader, ShaderContext, ShaderOptions, SimpleMaterial,
     TextureStash,
-  },
-  types::{Mat4, Vec2, Vec3, Vec4, Vec3Ord},
-  util::f32_cmp,
-  wavefront::Mesh,
-};
+  }, types::{Mat4, Vec2, Vec3, Vec4Ord, Vec4}, util::{divw3, f32_cmp}, wavefront::Mesh};
 
 pub type Color = Vec4;
 
@@ -237,8 +231,8 @@ impl Camera {
     self.view *= trans.inverse();
   }
 
-  pub fn project_point(&self, pt: &Vec3) -> Vec3 {
-    self.matrix().project_point3((*pt).into()).into()
+  pub fn project(&self, pt: Vec4) -> Vec4 {
+    self.matrix() * pt
   }
 }
 
@@ -307,9 +301,9 @@ impl<T> Line<T> {
   where
     T: GenericPoint + Clone + Copy + Lerp,
   {
-    let get_x = |p: &Vec3| p.x;
-    let get_y = |p: &Vec3| p.y;
-    let get_z = |p: &Vec3| p.z;
+    let get_x = |p: &Vec4| p.x;
+    let get_y = |p: &Vec4| p.y;
+    let get_z = |p: &Vec4| p.z;
 
     if !self.clip_component(get_x, -1.0, 1.0) {
       return None.into_iter();
@@ -327,7 +321,7 @@ impl<T> Line<T> {
   fn clip_component<F>(&mut self, get_comp: F, min: f32, max: f32) -> bool
   where
     T: GenericPoint + Clone + Copy + Lerp,
-    F: Fn(&Vec3) -> f32,
+    F: Fn(&Vec4) -> f32,
   {
     let mut av = get_comp(self.a().pos());
     let mut bv = get_comp(self.b().pos());
@@ -679,7 +673,7 @@ impl<'a, T> Trig<T> {
       .map(|mut t| {
         t.map_in_place(|pt| {
           let world_pos = *pt.pos();
-          *pt.pos_mut() = world_to_camera.transform_point3(world_pos);
+          *pt.pos_mut() = world_to_camera * world_pos;
         });
         t
       })
@@ -687,7 +681,7 @@ impl<'a, T> Trig<T> {
       .map(|mut t| {
         t.map_in_place(|pt| {
           let camera_pos = *pt.pos();
-          *pt.pos_mut() = camera_to_world.transform_point3(camera_pos);
+          *pt.pos_mut() = camera_to_world * camera_pos;
         });
         t
       })
@@ -700,7 +694,7 @@ impl<'a, T> Trig<T> {
   {
     let comp_in_range = |v| (-1.0..=1.0).contains(&v);
     let pt_in_range =
-      |p: &Vec3| comp_in_range(p.x) && comp_in_range(p.y) && comp_in_range(p.z);
+      |p: &Vec4| comp_in_range(p.x) && comp_in_range(p.y) && comp_in_range(p.z);
 
     pt_in_range(self.a().pos())
       && pt_in_range(self.b().pos())
@@ -709,8 +703,8 @@ impl<'a, T> Trig<T> {
 }
 
 pub trait GenericPoint: Lerp + Clone + Copy {
-  fn pos(&self) -> &Vec3;
-  fn pos_mut(&mut self) -> &mut Vec3;
+  fn pos(&self) -> &Vec4;
+  fn pos_mut(&mut self) -> &mut Vec4;
 
   fn scale_to_screen(&mut self, (w, h): (f32, f32)) {
     let p = self.pos_mut();
@@ -720,19 +714,19 @@ pub trait GenericPoint: Lerp + Clone + Copy {
 }
 
 impl GenericPoint for Pt {
-  fn pos(&self) -> &Vec3 {
+  fn pos(&self) -> &Vec4 {
     &self.pos
   }
-  fn pos_mut(&mut self) -> &mut Vec3 {
+  fn pos_mut(&mut self) -> &mut Vec4 {
     &mut self.pos
   }
 }
 
-impl GenericPoint for Vec3 {
-  fn pos(&self) -> &Vec3 {
+impl GenericPoint for Vec4 {
+  fn pos(&self) -> &Vec4 {
     &self
   }
-  fn pos_mut(&mut self) -> &mut Vec3 {
+  fn pos_mut(&mut self) -> &mut Vec4 {
     self
   }
 }
@@ -819,7 +813,7 @@ impl<T> Face<T> {
     debug_assert!(self.vertices.len() >= 3);
     let v1 = *self.vertices()[1].pos() - *self.vertices()[0].pos();
     let v2 = *self.vertices()[2].pos() - *self.vertices()[0].pos();
-    v1.cross(v2)
+    divw3(v1).cross(divw3(v2))
   }
 
   pub fn map_in_place<F>(&mut self, f: F)
@@ -1088,8 +1082,8 @@ impl Default for RasterizerMode {
 /// A point on screen with integer xy coordinates and floating depth (z)
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub struct Pt {
-  pub pos: Vec3,
-  pub world_pos: Vec3,
+  pub pos: Vec4,
+  pub world_pos: Vec4,
   pub color: Color,
   pub normal: Vec3,
   pub uv: Vec2,
@@ -1114,8 +1108,8 @@ impl<'a> From<&PolyVert<'a>> for Pt {
 impl Pt {
   pub fn new(point: Vec3) -> Self {
     Self {
-      pos: point,
-      world_pos: point,
+      pos: (point, 1.0).into(),
+      world_pos: (point, 1.0).into(),
       color: COLOR::rgba(1.0, 0.0, 0.0, 1.0),
       uv: Vec2::new(0.0, 0.0),
       normal: Vec3::ZERO,
@@ -1174,12 +1168,12 @@ pub struct RasterizerMetric {
 
 // the coords of volume are all in clip space
 pub struct ShadowVolume {
-  volume: Vec<Face<Vec3>>,
+  volume: Vec<Face<Vec4>>,
   // key absent: new edge
   // >0: edge is light facing
   // <0: edge is light away
   // =0: edge is silhouette
-  edge_index: HashMap<Line<Vec3Ord>, i32>,
+  edge_index: HashMap<Line<Vec4Ord>, i32>,
   shadow_distance: f32,
 }
 
@@ -1198,7 +1192,7 @@ impl ShadowVolume {
   }
 
   pub fn add_face(&mut self, face: &Face<Pt>, camera: &Camera, light: &Light) {
-    let sign = if face.normal().dot(light.pos().normalize()) < 0.0 {
+    let sign = if face.normal().dot(*light.dir()) < 0.0 {
       -1
     } else {
       1
@@ -1218,11 +1212,11 @@ impl ShadowVolume {
       let p1_far = light.project(&p1, self.shadow_distance);
       let p2_far = light.project(&p2, self.shadow_distance);
 
-      let face: Face<Vec3> = [
-        camera.project_point(&p1),
-        camera.project_point(&p2),
-        camera.project_point(&p2_far),
-        camera.project_point(&p1_far),
+      let face: Face<Vec4> = [
+        camera.project(p1),
+        camera.project(p2),
+        camera.project(p2_far),
+        camera.project(p1_far),
       ]
       .into();
 
@@ -1246,7 +1240,7 @@ impl ShadowVolume {
     }
   }
 
-  pub fn faces(&self) -> impl Iterator<Item = &Face<Vec3>> + '_ {
+  pub fn faces(&self) -> impl Iterator<Item = &Face<Vec4>> + '_ {
     self.volume.iter()
   }
 
@@ -1254,7 +1248,8 @@ impl ShadowVolume {
   pub fn to_world_mesh(&self) -> WorldMesh {
     let mut mesh = Mesh::new();
     for face in self.faces() {
-      mesh.add_simple_face(face.as_slice())
+      let face_vec3 = face.clone().map(divw3);
+      mesh.add_simple_face(face_vec3.as_slice())
     }
 
     WorldMesh::from(mesh)
@@ -1263,8 +1258,8 @@ impl ShadowVolume {
       .casts_shadow(false)
   }
 
-  fn register_edge(&mut self, line: &Line<Pt>, sign: i32) -> Line<Vec3Ord> {
-    let mut key = line.clone().map(|x| Vec3Ord::new(x.world_pos));
+  fn register_edge(&mut self, line: &Line<Pt>, sign: i32) -> Line<Vec4Ord> {
+    let mut key = line.clone().map(|x| Vec4Ord::new(x.world_pos));
     key.sort_ends();
 
     let val = self.edge_index.entry(key.clone()).or_insert(0);
@@ -1273,12 +1268,12 @@ impl ShadowVolume {
     key
   }
 
-  fn is_silhouette_edge(&self, key: &Line<Vec3Ord>) -> bool {
+  fn is_silhouette_edge(&self, key: &Line<Vec4Ord>) -> bool {
     let v = self.edge_index.get(key).unwrap_or(&0);
     *v == 0
   }
 
-  fn deregister_edge(&mut self, key: &Line<Vec3Ord>) {
+  fn deregister_edge(&mut self, key: &Line<Vec4Ord>) {
     self.edge_index.remove(key);
   }
 }
@@ -1415,7 +1410,7 @@ impl Rasterizer {
   #[inline(never)]
   fn fill_trig_in_stencil_buffer(
     &self,
-    trig: Trig<Vec3>,
+    trig: Trig<Vec4>,
     sign: i32,
     buffer: &mut Image<i32>,
   ) {

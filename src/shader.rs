@@ -2,12 +2,7 @@ use std::rc::Rc;
 
 use dyn_clone::DynClone;
 
-use crate::{
-  raster::{Color, Image, Pt, WorldMesh, COLOR},
-  types::{Mat4, Vec2, Vec3, Vec4},
-  util::reflect,
-  wavefront::Mesh,
-};
+use crate::{raster::{Color, Image, Pt, WorldMesh, COLOR}, types::{Mat4, Vec2, Vec3, Vec4}, util::{divw, divw3, reflect}, wavefront::Mesh};
 
 pub type TextureHandle = usize;
 
@@ -33,28 +28,37 @@ impl TextureStash {
   }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct Light {
   // in world coordinates
-  pos: Vec3,
+  pos: Vec4,
+  dir: Vec3,
   color: Color,
 }
 
 impl Light {
   pub fn new(pos: Vec3, color: Color) -> Self {
-    Self { pos, color }
+    let dir = pos.normalize();
+    let pos = (pos, 1.0).into();
+    Self { pos, dir, color }
   }
 
-  pub fn pos(&self) -> &Vec3 {
+  pub fn pos(&self) -> &Vec4 {
     &self.pos
+  }
+
+  pub fn dir(&self) -> &Vec3 {
+    &self.dir
   }
 
   pub fn color(&self) -> &Color {
     &self.color
   }
 
-  pub fn project(&self, pt: &Vec3, distance: f32) -> Vec3 {
-    let dir = (*pt - self.pos).normalize();
-    dir * distance + *pt
+  pub fn project(&self, pt: &Vec4, distance: f32) -> Vec4 {
+    let pt = divw(*pt);
+    let dir: Vec4 = (pt - self.pos).normalize();
+    dir * distance + pt
   }
 
   pub fn to_world_mesh(&self, mesh: Rc<Mesh>) -> WorldMesh {
@@ -107,7 +111,7 @@ impl<'a> ShaderContext<'a> {
 
 pub trait Shader: DynClone {
   fn vertex(&self, context: &ShaderContext, pt: &mut Pt) {
-    pt.pos = context.camera.project_point3(pt.world_pos);
+    pt.pos = divw(context.camera * pt.world_pos);
     // TODO: texture coordinates perspective correction
   }
 
@@ -135,75 +139,66 @@ impl Shader for PureColor {
 #[derive(Clone)]
 pub struct DiffuseShader {
   color: Color,
-  light: Color,
-  light_pos: Vec3,
 }
 
 impl DiffuseShader {
   #[allow(unused)]
-  pub fn new(color: Color, light_pos: Vec3) -> Self {
-    let light = COLOR::rgb(1.0, 1.0, 1.0);
-
-    Self {
-      color,
-      light,
-      light_pos,
-    }
+  pub fn new(color: Color) -> Self {
+    Self { color }
   }
 }
 
 impl Shader for DiffuseShader {
-  fn fragment(&self, _context: &ShaderContext, pt: &mut Pt) {
-    let light_angle = (self.light_pos - pt.world_pos).normalize();
-    let light_intensity = f32::max(light_angle.dot(pt.normal.normalize()), 0.0);
+  fn fragment(&self, context: &ShaderContext, pt: &mut Pt) {
     let ambient = self.color * 0.2;
-    let mut color = Vec4::ZERO;
-    color += self.light * self.color * light_intensity + ambient;
+    let mut color = ambient;
+
+    for light in context.lights {
+      let light_angle = divw3((*light.pos() - pt.world_pos).normalize());
+      let light_intensity =
+        f32::max(light_angle.dot(pt.normal.normalize()), 0.0);
+      color += *light.color() * self.color * light_intensity;
+    }
+
     pt.color = color;
   }
 }
 
 #[derive(Clone)]
 pub struct SpecularShader {
-  light: Color,
-  light_pos: Vec3,
   color: Color,
   shininess: f32,
 }
 
 impl SpecularShader {
   #![allow(unused)]
-  pub fn new(color: Color, light_pos: Vec3) -> Self {
+  pub fn new(color: Color) -> Self {
     let shininess = 5.0;
-    let light = COLOR::rgb(1.0, 1.0, 1.0);
-    Self {
-      light,
-      light_pos,
-      color,
-      shininess,
-    }
+    Self { color, shininess }
   }
 }
 
 impl Shader for SpecularShader {
   fn fragment(&self, context: &ShaderContext, pt: &mut Pt) {
+    let ambient = self.color * 0.2;
+    let mut color = ambient;
+
     let normal = pt.normal.normalize();
-    let light_angle = (self.light_pos - pt.world_pos).normalize();
-    let camera_angle =
-      Vec3::from(context.camera.project_point3(Vec3::ZERO.into())) * -1.0;
-    let light_refl_angle = reflect(&light_angle, &normal).normalize();
-    let ambient = self.color * 0.1;
-    let mut color = Vec4::ZERO;
 
-    let light_intensity = f32::max(light_angle.dot(normal), 0.0);
-    color += (self.light * self.color) * light_intensity;
+    for light in context.lights {
+      let light_angle = divw3((*light.pos() - pt.world_pos).normalize());
+      let camera_angle =
+        Vec3::from(context.camera.project_point3(Vec3::ZERO.into())) * -1.0;
+      let light_refl_angle = reflect(&light_angle, &normal).normalize();
 
-    let phong_intensity =
-      f32::max(light_refl_angle.dot(camera_angle.normalize()), 0.0);
+      let light_intensity = f32::max(light_angle.dot(normal), 0.0);
+      color += (*light.color() * self.color) * light_intensity;
 
-    color += f32::powf(phong_intensity, self.shininess) * self.light;
+      let phong_intensity =
+        f32::max(light_refl_angle.dot(camera_angle.normalize()), 0.0);
 
-    color += ambient;
+      color += f32::powf(phong_intensity, self.shininess) * *light.color();
+    }
 
     pt.color = color;
   }
@@ -249,12 +244,11 @@ impl SimpleMaterial {
     light: &Light,
   ) -> Color {
     let normal = pt.normal.normalize();
-    let light_angle = (*light.pos() - pt.world_pos).normalize();
+    let light_angle = (divw3(*light.pos()) - divw3(pt.world_pos)).normalize();
     // this is
     // Vec3::from(context.camera.project_point3(Vec3::ZERO.into()))
     //   * -1.0;
 
-    // diffuse color
     let light_intensity = light_angle.dot(normal).max(0.0);
     let diffuse_color = match self.color_texture {
       Some(handle) => context.get_texture(handle, pt.uv),
@@ -266,7 +260,7 @@ impl SimpleMaterial {
 
   fn specular_color(&self, pt: &Pt, light: &Light) -> Color {
     let normal = pt.normal.normalize();
-    let light_angle = (*light.pos() - pt.world_pos).normalize();
+    let light_angle = (divw3(*light.pos()) - divw3(pt.world_pos)).normalize();
     let light_refl_angle = reflect(&light_angle, &normal).normalize();
     let camera_angle = Vec3::new(0.0, 0.0, -1.0);
 

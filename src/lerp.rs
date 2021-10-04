@@ -1,4 +1,4 @@
-use crate::types::{Vector2, Vector3, Vector4};
+use crate::types::{Vec2, Vec3, Vec4};
 
 pub trait Lerp {
   fn lerp(&self, other: &Self, t: f32) -> Self;
@@ -101,24 +101,24 @@ where
   }
 }
 
-impl Lerp for Vector4 {
+impl Lerp for Vec4 {
   fn lerp(&self, other: &Self, t: f32) -> Self {
     Self::lerp(*self, *other, t)
   }
 }
 
-impl Lerp for Vector3 {
+impl Lerp for Vec3 {
   fn lerp(&self, other: &Self, t: f32) -> Self {
     Self::lerp(*self, *other, t)
   }
 }
 
-// impl Lerp for Point3 {}
+// impl Lerp for Vec3 {}
 //
-// Point3 is the same type as Vector3 under different alias so we
+// Vec3 is the same type as Vec3 under different alias so we
 // don't need to implement it
 
-impl Lerp for Vector2 {
+impl Lerp for Vec2 {
   fn lerp(&self, other: &Self, t: f32) -> Self {
     Self::lerp(*self, *other, t)
   }

@@ -33,7 +33,7 @@ mod wavefront;
 use crate::{
   raster::Image,
   shader::TextureFilterMode,
-  types::{Mat4, Point3},
+  types::{Mat4, vec3},
 };
 
 pub struct RenderResult {
@@ -243,7 +243,7 @@ impl RasterApp {
       Mat4::from_euler(EulerRot::XYZ, tun.rot[0], tun.rot[1], tun.rot[2]);
 
     let transform = (translation * rotation).inverse();
-    let target = transform.transform_point3a(Point3::new(0.0, 0.0, 0.0)) * 0.9;
+    let target = transform.transform_point3(vec3(0.0, 0.0, 0.0)) * 0.9;
 
     self.tunable.light_pos[0] = target.x;
     self.tunable.light_pos[1] = target.y;

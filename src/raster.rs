@@ -9,12 +9,12 @@ use crate::{
     Light, PureColor, Shader, ShaderContext, ShaderOptions, SimpleMaterial,
     TextureStash,
   },
-  types::{Mat4, Point3, Point3Ord, Vector2, Vector3, Vector4},
+  types::{Mat4, Vec2, Vec3, Vec4, Vec3Ord},
   util::f32_cmp,
   wavefront::Mesh,
 };
 
-pub type Color = Vector4;
+pub type Color = Vec4;
 
 #[allow(non_snake_case)]
 pub(crate) mod COLOR {
@@ -159,12 +159,12 @@ impl<T> Image<T> {
 }
 
 impl Image<Color> {
-  pub fn nearest_color(&self, uv: Vector2) -> Color {
+  pub fn nearest_color(&self, uv: Vec2) -> Color {
     let coords = self.nearest_coords(uv, (0, 0));
     *self.pixel(coords).unwrap()
   }
 
-  pub fn bilinear_color(&self, uv: Vector2) -> Color {
+  pub fn bilinear_color(&self, uv: Vec2) -> Color {
     // row 1: |a b|
     // row 2: |c d|
     let color_a = *self.pixel(self.nearest_coords(uv, (0, 0))).unwrap();
@@ -185,7 +185,7 @@ impl Image<Color> {
   }
 
   /// if out of bound, return the nearest coordinates within the bound
-  fn nearest_coords(&self, uv: Vector2, offset: (i32, i32)) -> (i32, i32) {
+  fn nearest_coords(&self, uv: Vec2, offset: (i32, i32)) -> (i32, i32) {
     let mut x = (uv.x * (self.width() - 1) as f32) as i32 + offset.0;
     let mut y = (uv.y * (self.height() - 1) as f32) as i32 + offset.1;
 
@@ -209,8 +209,8 @@ impl Image<Color> {
 #[derive(Debug, Clone)]
 pub struct Camera {
   // world coordinate
-  inv_transform: Mat4,
-  perspective: Mat4,
+  view: Mat4,
+  projection: Mat4,
 }
 
 impl Camera {
@@ -220,23 +220,24 @@ impl Camera {
     znear: f32,
     zfar: f32,
   ) -> Self {
-    let perspective = Mat4::perspective_rh_gl(fovy, aspect, znear, zfar);
-    let inv_transform = Mat4::IDENTITY;
-    Self {
-      perspective,
-      inv_transform,
-    }
+    let projection = Mat4::perspective_rh_gl(fovy, aspect, znear, zfar);
+    let view = Mat4::IDENTITY;
+    Self { projection, view }
   }
 
   pub fn matrix(&self) -> Mat4 {
-    self.perspective * self.inv_transform
+    self.projection * self.view
+  }
+
+  pub fn view_matrix(&self) -> Mat4 {
+    self.view
   }
 
   pub fn transformd(&mut self, trans: &Mat4) {
-    self.inv_transform *= trans.inverse();
+    self.view *= trans.inverse();
   }
 
-  pub fn project_point(&self, pt: &Point3) -> Point3 {
+  pub fn project_point(&self, pt: &Vec3) -> Vec3 {
     self.matrix().project_point3((*pt).into()).into()
   }
 }
@@ -279,12 +280,12 @@ impl<T> Line<T> {
   // The caller needs to ensure "self" is in screen coordinates
   pub fn to_horizontal_pixels(self) -> impl Iterator<Item = T>
   where
-    T: ToClipSpace + Clone + Copy + Lerp,
+    T: GenericPoint + Clone + Copy + Lerp,
   {
     // ensure the line is indeed flat
-    debug_assert!((self.a().to_clip().y - self.b().to_clip().y) as i32 == 0);
-    let x1 = self.a().to_clip().x;
-    let x2 = self.b().to_clip().x;
+    debug_assert!((self.a().pos().y - self.b().pos().y) as i32 == 0);
+    let x1 = self.a().pos().x;
+    let x2 = self.b().pos().x;
     let w = (x1 - x2).abs() as usize;
 
     lerp_closed_iter(self.ends[0], self.ends[1], w + 1)
@@ -292,10 +293,10 @@ impl<T> Line<T> {
 
   pub fn to_pixels(self) -> impl Iterator<Item = T>
   where
-    T: ToClipSpace + Clone + Copy + Lerp,
+    T: GenericPoint + Clone + Copy + Lerp,
   {
-    let a = self.a().to_clip();
-    let b = self.b().to_clip();
+    let a = self.a().pos();
+    let b = self.b().pos();
     let dx = b.x - a.x;
     let dy = b.y - a.y;
     let n = f32::max(dx.abs(), dy.abs()) as usize;
@@ -304,11 +305,11 @@ impl<T> Line<T> {
 
   pub fn clip(mut self) -> impl Iterator<Item = Line<T>>
   where
-    T: ToClipSpace + Clone + Copy + Lerp,
+    T: GenericPoint + Clone + Copy + Lerp,
   {
-    let get_x = |p: &Point3| p.x;
-    let get_y = |p: &Point3| p.y;
-    let get_z = |p: &Point3| p.z;
+    let get_x = |p: &Vec3| p.x;
+    let get_y = |p: &Vec3| p.y;
+    let get_z = |p: &Vec3| p.z;
 
     if !self.clip_component(get_x, -1.0, 1.0) {
       return None.into_iter();
@@ -325,11 +326,11 @@ impl<T> Line<T> {
 
   fn clip_component<F>(&mut self, get_comp: F, min: f32, max: f32) -> bool
   where
-    T: ToClipSpace + Clone + Copy + Lerp,
-    F: Fn(&Point3) -> f32,
+    T: GenericPoint + Clone + Copy + Lerp,
+    F: Fn(&Vec3) -> f32,
   {
-    let mut av = get_comp(self.a().to_clip());
-    let mut bv = get_comp(self.b().to_clip());
+    let mut av = get_comp(self.a().pos());
+    let mut bv = get_comp(self.b().pos());
 
     if av < min && bv < min {
       // both beyond min; skip this line
@@ -357,8 +358,8 @@ impl<T> Line<T> {
     }
 
     // recalculate because a and b may be changed
-    av = get_comp(self.a().to_clip());
-    bv = get_comp(self.b().to_clip());
+    av = get_comp(self.a().pos());
+    bv = get_comp(self.b().pos());
 
     if av > max && bv <= max {
       // clip a on max
@@ -461,10 +462,10 @@ impl<'a, T> Trig<T> {
     self.vertices.iter_mut().for_each(f)
   }
 
-  // the caller needs to ensure self.vert.to_clip are of screen coords
+  // the caller needs to ensure self.vert.pos are of screen coords
   pub fn to_fill_pixels(self) -> impl Iterator<Item = T>
   where
-    T: ToClipSpace + Clone + Copy + Lerp,
+    T: GenericPoint + Clone + Copy + Lerp,
   {
     let [upper, lower] = self.horizontally_split();
     let upper = upper
@@ -480,23 +481,23 @@ impl<'a, T> Trig<T> {
 
   pub fn to_edge_pixels(self) -> impl Iterator<Item = T>
   where
-    T: ToClipSpace + Clone + Copy + Lerp,
+    T: GenericPoint + Clone + Copy + Lerp,
   {
     self.edges().flat_map(|line| line.to_pixels())
   }
 
   // the caller needs to ensure self is an upper trig and
-  // self.vert.to_clip are of screen coordinates
+  // self.vert.pos are of screen coordinates
   pub fn upper_trig_to_horizontal_lines(self) -> impl Iterator<Item = Line<T>>
   where
-    T: ToClipSpace + Clone + Copy + Lerp,
+    T: GenericPoint + Clone + Copy + Lerp,
   {
     let top = self.a();
     let bottom_left = self.b();
     let bottom_right = self.c();
 
-    let top_y = top.to_clip().y;
-    let bottom_y = bottom_left.to_clip().y;
+    let top_y = top.pos().y;
+    let bottom_y = bottom_left.pos().y;
     let h = (top_y - bottom_y).abs() as usize;
 
     let left_pts_iter = lerp_closed_iter(*top, *bottom_left, h + 1);
@@ -507,14 +508,14 @@ impl<'a, T> Trig<T> {
 
   pub fn lower_trig_to_horizontal_lines(self) -> impl Iterator<Item = Line<T>>
   where
-    T: ToClipSpace + Clone + Copy + Lerp,
+    T: GenericPoint + Clone + Copy + Lerp,
   {
     let top_left = self.a();
     let top_right = self.b();
     let bottom = self.c();
 
-    let top_y = top_left.to_clip().y;
-    let bottom_y = bottom.to_clip().y;
+    let top_y = top_left.pos().y;
+    let bottom_y = bottom.pos().y;
     let h = (top_y - bottom_y).abs() as usize;
 
     let left_pts_iter = lerp_closed_iter(*top_left, *bottom, h + 1);
@@ -526,15 +527,15 @@ impl<'a, T> Trig<T> {
   // returns two triangles whose vertices are ordered by y values
   pub fn horizontally_split(mut self) -> [Option<Trig<T>>; 2]
   where
-    T: ToClipSpace + Clone + Copy + Lerp,
+    T: GenericPoint + Clone + Copy + Lerp,
   {
     const EPS: f32 = 0.1;
     self
       .vertices
-      .sort_unstable_by(|p1, p2| f32_cmp(&p1.to_clip().y, &p2.to_clip().y));
-    let ay = self.a().to_clip().y;
-    let by = self.b().to_clip().y;
-    let cy = self.c().to_clip().y;
+      .sort_unstable_by(|p1, p2| f32_cmp(&p1.pos().y, &p2.pos().y));
+    let ay = self.a().pos().y;
+    let by = self.b().pos().y;
+    let cy = self.c().pos().y;
 
     if abs_diff_eq!(ay, cy, epsilon = EPS) {
       // a flat line
@@ -565,7 +566,7 @@ impl<'a, T> Trig<T> {
 
   pub fn clip(self) -> SmallVec<[Trig<T>; 2]>
   where
-    T: ToClipSpace + Lerp + Clone + Copy,
+    T: GenericPoint + Lerp + Clone + Copy,
   {
     if self.fully_visible() {
       return smallvec![self];
@@ -575,12 +576,12 @@ impl<'a, T> Trig<T> {
 
     init
       .into_iter()
-      .flat_map(|t| t.clip_component(|p| p.to_clip().z, -1.0, -1.0))
-      .flat_map(|t| t.clip_component(|p| p.to_clip().z, 1.0, 1.0))
-      .flat_map(|t| t.clip_component(|p| p.to_clip().x, -1.0, -1.0))
-      .flat_map(|t| t.clip_component(|p| p.to_clip().x, 1.0, 1.0))
-      .flat_map(|t| t.clip_component(|p| p.to_clip().y, -1.0, -1.0))
-      .flat_map(|t| t.clip_component(|p| p.to_clip().y, 1.0, 1.0))
+      .flat_map(|t| t.clip_component(|p| p.pos().z, -1.0, -1.0))
+      .flat_map(|t| t.clip_component(|p| p.pos().z, 1.0, 1.0))
+      .flat_map(|t| t.clip_component(|p| p.pos().x, -1.0, -1.0))
+      .flat_map(|t| t.clip_component(|p| p.pos().x, 1.0, 1.0))
+      .flat_map(|t| t.clip_component(|p| p.pos().y, -1.0, -1.0))
+      .flat_map(|t| t.clip_component(|p| p.pos().y, 1.0, 1.0))
       .collect()
   }
 
@@ -591,7 +592,7 @@ impl<'a, T> Trig<T> {
     sign: f32,
   ) -> SmallVec<[Trig<T>; 2]>
   where
-    T: ToClipSpace + Lerp + Clone + Copy,
+    T: GenericPoint + Lerp + Clone + Copy,
     F: Fn(&T) -> f32,
   {
     let (va, vb, vc) = (self.a(), self.b(), self.c());
@@ -663,9 +664,10 @@ impl<'a, T> Trig<T> {
 
   // clip in world space to avoid transforming point behind camera, see:
   // https://stackoverflow.com/questions/3329308/perspective-projection-how-do-i-project-points-which-are-behind-camera
+  #[allow(unused)]
   pub fn clip_camera_plane(self, camera: &Camera) -> SmallVec<[Trig<T>; 2]>
   where
-    T: ToClipSpace + Lerp + Clone + Copy,
+    T: GenericPoint + Lerp + Clone + Copy,
   {
     let world_to_camera = camera.view_matrix();
     let camera_to_world = world_to_camera.inverse();
@@ -676,16 +678,16 @@ impl<'a, T> Trig<T> {
       .into_iter()
       .map(|mut t| {
         t.map_in_place(|pt| {
-          let world_pos = *pt.to_clip();
-          *pt.to_clip_mut() = world_to_camera.transform_point3a(world_pos);
+          let world_pos = *pt.pos();
+          *pt.pos_mut() = world_to_camera.transform_point3(world_pos);
         });
         t
       })
-      .flat_map(|t| t.clip_component(|p| p.to_clip().z, 0.1, 1.0))
+      .flat_map(|t| t.clip_component(|p| p.pos().z, 0.1, 1.0))
       .map(|mut t| {
         t.map_in_place(|pt| {
-          let camera_pos = *pt.to_clip();
-          *pt.to_clip_mut() = camera_to_world.transform_point3a(camera_pos);
+          let camera_pos = *pt.pos();
+          *pt.pos_mut() = camera_to_world.transform_point3(camera_pos);
         });
         t
       })
@@ -694,45 +696,43 @@ impl<'a, T> Trig<T> {
 
   pub fn fully_visible(&self) -> bool
   where
-    T: ToClipSpace,
+    T: GenericPoint,
   {
     let comp_in_range = |v| (-1.0..=1.0).contains(&v);
-    let pt_in_range = |p: &Point3| {
-      comp_in_range(p.x) && comp_in_range(p.y) && comp_in_range(p.z)
-    };
+    let pt_in_range =
+      |p: &Vec3| comp_in_range(p.x) && comp_in_range(p.y) && comp_in_range(p.z);
 
-    pt_in_range(self.a().to_clip())
-      && pt_in_range(self.b().to_clip())
-      && pt_in_range(self.c().to_clip())
+    pt_in_range(self.a().pos())
+      && pt_in_range(self.b().pos())
+      && pt_in_range(self.c().pos())
   }
 }
 
-/// Types that represents a point in clip space
-pub trait ToClipSpace {
-  fn to_clip(&self) -> &Point3;
-  fn to_clip_mut(&mut self) -> &mut Point3;
+pub trait GenericPoint: Lerp + Clone + Copy {
+  fn pos(&self) -> &Vec3;
+  fn pos_mut(&mut self) -> &mut Vec3;
 
   fn scale_to_screen(&mut self, (w, h): (f32, f32)) {
-    let p = self.to_clip_mut();
+    let p = self.pos_mut();
     p.x = 0.5 * (w - 1.0) * (p.x + 1.0);
     p.y = 0.5 * (h - 1.0) * (1.0 - p.y);
   }
 }
 
-impl ToClipSpace for Pt {
-  fn to_clip(&self) -> &Point3 {
-    &self.clip_pos
+impl GenericPoint for Pt {
+  fn pos(&self) -> &Vec3 {
+    &self.pos
   }
-  fn to_clip_mut(&mut self) -> &mut Point3 {
-    &mut self.clip_pos
+  fn pos_mut(&mut self) -> &mut Vec3 {
+    &mut self.pos
   }
 }
 
-impl ToClipSpace for Point3 {
-  fn to_clip(&self) -> &Point3 {
+impl GenericPoint for Vec3 {
+  fn pos(&self) -> &Vec3 {
     &self
   }
-  fn to_clip_mut(&mut self) -> &mut Point3 {
+  fn pos_mut(&mut self) -> &mut Vec3 {
     self
   }
 }
@@ -773,13 +773,13 @@ impl<T> Face<T> {
   /// the caller needs to ensure T is in clip space.
   pub fn is_hidden(&self) -> bool
   where
-    T: ToClipSpace,
+    T: GenericPoint,
   {
     if self.double_faced() {
       return false;
     }
 
-    let positive_direction: Vector3 = [0.0, 0.0, 1.0].into();
+    let positive_direction: Vec3 = [0.0, 0.0, 1.0].into();
     self.normal().dot(positive_direction) < 0.0
   }
 
@@ -812,13 +812,13 @@ impl<T> Face<T> {
     })
   }
 
-  pub fn normal(&self) -> Vector3
+  pub fn normal(&self) -> Vec3
   where
-    T: ToClipSpace,
+    T: GenericPoint,
   {
     debug_assert!(self.vertices.len() >= 3);
-    let v1 = *self.vertices()[1].to_clip() - *self.vertices()[0].to_clip();
-    let v2 = *self.vertices()[2].to_clip() - *self.vertices()[0].to_clip();
+    let v1 = *self.vertices()[1].pos() - *self.vertices()[0].pos();
+    let v2 = *self.vertices()[2].pos() - *self.vertices()[0].pos();
     v1.cross(v2)
   }
 
@@ -896,9 +896,9 @@ impl IndexedPolyVert {
 
 #[derive(Debug, Clone, Copy)]
 pub struct PolyVert<'a> {
-  pub vertex: &'a Point3,
-  pub texture_coords: Option<&'a Vector2>,
-  pub normal: Option<&'a Vector3>,
+  pub vertex: &'a Vec3,
+  pub texture_coords: Option<&'a Vec2>,
+  pub normal: Option<&'a Vec3>,
 }
 
 #[derive(Clone)]
@@ -1088,14 +1088,14 @@ impl Default for RasterizerMode {
 /// A point on screen with integer xy coordinates and floating depth (z)
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub struct Pt {
-  pub clip_pos: Point3,
-  pub world_pos: Point3,
+  pub pos: Vec3,
+  pub world_pos: Vec3,
   pub color: Color,
-  pub normal: Vector3,
-  pub uv: Vector2,
+  pub normal: Vec3,
+  pub uv: Vec2,
   pub in_shadow: Option<bool>,
-  pub buf_v2: Option<Vector2>,
-  pub buf_v3: Option<Vector3>,
+  pub buf_v2: Option<Vec2>,
+  pub buf_v3: Option<Vec3>,
 }
 
 impl<'a> From<&PolyVert<'a>> for Pt {
@@ -1112,29 +1112,29 @@ impl<'a> From<&PolyVert<'a>> for Pt {
 }
 
 impl Pt {
-  pub fn new(point: Point3) -> Self {
+  pub fn new(point: Vec3) -> Self {
     Self {
-      clip_pos: point,
+      pos: point,
       world_pos: point,
       color: COLOR::rgba(1.0, 0.0, 0.0, 1.0),
-      uv: Vector2::new(0.0, 0.0),
-      normal: Vector3::ZERO,
+      uv: Vec2::new(0.0, 0.0),
+      normal: Vec3::ZERO,
       in_shadow: None,
       buf_v2: None,
       buf_v3: None,
     }
   }
 
-  pub fn set_uv(&mut self, uv: Vector2) {
+  pub fn set_uv(&mut self, uv: Vec2) {
     self.uv = uv;
   }
 
-  pub fn set_normal(&mut self, normal: Vector3) {
+  pub fn set_normal(&mut self, normal: Vec3) {
     self.normal = normal.normalize();
   }
 
   pub fn depth(&self) -> f32 {
-    self.clip_pos.z
+    self.pos.z
   }
 }
 
@@ -1145,7 +1145,7 @@ impl Lerp for Pt {
     }
 
     Pt {
-      clip_pos: lerp(t, &self.clip_pos, &other.clip_pos),
+      pos: lerp(t, &self.pos, &other.pos),
       world_pos: lerp(t, &self.world_pos, &other.world_pos),
       normal: lerp(t, &self.normal, &other.normal),
       color: lerp(t, &self.color, &other.color),
@@ -1174,12 +1174,12 @@ pub struct RasterizerMetric {
 
 // the coords of volume are all in clip space
 pub struct ShadowVolume {
-  volume: Vec<Face<Point3>>,
+  volume: Vec<Face<Vec3>>,
   // key absent: new edge
   // >0: edge is light facing
   // <0: edge is light away
   // =0: edge is silhouette
-  edge_index: HashMap<Line<Point3Ord>, i32>,
+  edge_index: HashMap<Line<Vec3Ord>, i32>,
   shadow_distance: f32,
 }
 
@@ -1218,7 +1218,7 @@ impl ShadowVolume {
       let p1_far = light.project(&p1, self.shadow_distance);
       let p2_far = light.project(&p2, self.shadow_distance);
 
-      let face: Face<Point3> = [
+      let face: Face<Vec3> = [
         camera.project_point(&p1),
         camera.project_point(&p2),
         camera.project_point(&p2_far),
@@ -1246,7 +1246,7 @@ impl ShadowVolume {
     }
   }
 
-  pub fn faces(&self) -> impl Iterator<Item = &Face<Point3>> + '_ {
+  pub fn faces(&self) -> impl Iterator<Item = &Face<Vec3>> + '_ {
     self.volume.iter()
   }
 
@@ -1263,8 +1263,8 @@ impl ShadowVolume {
       .casts_shadow(false)
   }
 
-  fn register_edge(&mut self, line: &Line<Pt>, sign: i32) -> Line<Point3Ord> {
-    let mut key = line.clone().map(|x| Point3Ord::new(x.world_pos));
+  fn register_edge(&mut self, line: &Line<Pt>, sign: i32) -> Line<Vec3Ord> {
+    let mut key = line.clone().map(|x| Vec3Ord::new(x.world_pos));
     key.sort_ends();
 
     let val = self.edge_index.entry(key.clone()).or_insert(0);
@@ -1273,12 +1273,12 @@ impl ShadowVolume {
     key
   }
 
-  fn is_silhouette_edge(&self, key: &Line<Point3Ord>) -> bool {
+  fn is_silhouette_edge(&self, key: &Line<Vec3Ord>) -> bool {
     let v = self.edge_index.get(key).unwrap_or(&0);
     *v == 0
   }
 
-  fn deregister_edge(&mut self, key: &Line<Point3Ord>) {
+  fn deregister_edge(&mut self, key: &Line<Vec3Ord>) {
     self.edge_index.remove(key);
   }
 }
@@ -1415,7 +1415,7 @@ impl Rasterizer {
   #[inline(never)]
   fn fill_trig_in_stencil_buffer(
     &self,
-    trig: Trig<Point3>,
+    trig: Trig<Vec3>,
     sign: i32,
     buffer: &mut Image<i32>,
   ) {
@@ -1473,16 +1473,13 @@ impl Rasterizer {
     }
   }
 
-  fn rasterize_shadow_volume(
-    &mut self,
-    shadow_volume: &ShadowVolume,
-  ) {
+  fn rasterize_shadow_volume(&mut self, shadow_volume: &ShadowVolume) {
     let shadow_mesh = shadow_volume.to_world_mesh();
     let shader = shadow_mesh.shader();
 
     for mut face in shadow_mesh.faces() {
       // make sure shadow volume is drawn above the actual mesh
-      face.map_in_place(|p| p.clip_pos.z -= 0.000001);
+      face.map_in_place(|p| p.pos.z -= 0.000001);
 
       self.metric.vertices_shaded += face.len();
 
@@ -1578,7 +1575,7 @@ impl Rasterizer {
 
   // only put pixel in image buffer. does not shade it with color yet
   fn rasterize_pixel(&mut self, pt: Pt, shader: &Rc<dyn Shader>) {
-    let (x, y) = (pt.clip_pos.x as i32, pt.clip_pos.y as i32);
+    let (x, y) = (pt.pos.x as i32, pt.pos.y as i32);
     let (w, h) = self.size();
 
     if x < 0 || x >= w || y < 0 || y >= h {
@@ -1658,9 +1655,20 @@ mod test {
   use std::f32::consts::PI;
 
   use super::*;
+  use glam::{f32::Mat4, vec4};
 
   #[test]
   fn test_camera() {
+    let fov = 120.0_f32.to_radians();
+    let perspective = Mat4::perspective_rh_gl(fov, 1.0, 1.0, 100000000.0);
+
+    dbg!(perspective * vec4(0.0, 0.0, 2.0, 1.0));
+    dbg!(perspective * vec4(0.0, 0.0, 1.0, 1.0));
+    dbg!(perspective * vec4(0.0, 0.0, 0.0, 1.0));
+    dbg!(perspective * vec4(0.0, 0.0, -1.0, 1.0));
+    dbg!(perspective * vec4(0.0, 0.0, -2.0, 1.0));
+    dbg!(perspective * vec4(0.0, 0.0, -3.0, 1.0));
+
     assert!(false);
   }
 }

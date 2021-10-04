@@ -7,7 +7,7 @@ use anyhow::{ensure, Result};
 use crate::{
   raster::{Color, Face, Image, IndexedPolyVert, COLOR},
   shader::{Shader, SimpleMaterial, TextureStash},
-  types::{Mat4, Point3, Vector2, Vector3},
+  types::{Mat4, Vec3, Vec2},
 };
 
 struct Mtl {
@@ -88,9 +88,9 @@ impl Mtl {
 #[derive(Default)]
 pub struct Mesh {
   pub material: Option<Rc<dyn Shader>>,
-  pub vertices: Vec<Point3>,
-  pub vertex_normals: Vec<Vector3>,
-  pub texture_coords: Vec<Vector2>,
+  pub vertices: Vec<Vec3>,
+  pub vertex_normals: Vec<Vec3>,
+  pub texture_coords: Vec<Vec2>,
   pub faces: Vec<Face<IndexedPolyVert>>,
 }
 
@@ -125,7 +125,7 @@ impl Mesh {
   }
 
   #[allow(unused)]
-  pub fn add_simple_face(&mut self, vertices: &[Point3]) {
+  pub fn add_simple_face(&mut self, vertices: &[Vec3]) {
     let n = self.vertices.len();
     self.vertices.extend_from_slice(vertices);
     let mut face = Face::new(false);
@@ -139,12 +139,12 @@ impl Mesh {
     let vertices = self
       .vertices
       .iter()
-      .map(|p| matrix.transform_point3a(*p))
+      .map(|p| matrix.transform_point3(*p))
       .collect();
     let vertex_normals = self
       .vertex_normals
       .iter()
-      .map(|v| matrix.transform_vector3a(*v))
+      .map(|v| matrix.transform_vector3(*v))
       .collect();
 
     let material = self
@@ -275,14 +275,14 @@ fn parse_float(s: &str) -> Result<f32> {
   Ok(f32::from_str(s)?)
 }
 
-fn parse_point3(vs: &[&str]) -> Result<Point3> {
-  Ok(Point3::from_slice(&parse_floats(vs)?))
+fn parse_point3(vs: &[&str]) -> Result<Vec3> {
+  Ok(Vec3::from_slice(&parse_floats(vs)?))
 }
-fn parse_vec3(vs: &[&str]) -> Result<Vector3> {
-  Ok(Vector3::from_slice(&parse_floats(vs)?))
+fn parse_vec3(vs: &[&str]) -> Result<Vec3> {
+  Ok(Vec3::from_slice(&parse_floats(vs)?))
 }
-fn parse_vec2(vs: &[&str]) -> Result<Vector2> {
-  Ok(Vector2::from_slice(&parse_floats(vs)?))
+fn parse_vec2(vs: &[&str]) -> Result<Vec2> {
+  Ok(Vec2::from_slice(&parse_floats(vs)?))
 }
 
 fn parse_texture_color(

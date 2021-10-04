@@ -4,7 +4,7 @@ use dyn_clone::DynClone;
 
 use crate::{
   raster::{Color, Image, Pt, WorldMesh, COLOR},
-  types::{Mat4, Point3, Vector2, Vector3, Vector4},
+  types::{Mat4, Vec2, Vec3, Vec4},
   util::reflect,
   wavefront::Mesh,
 };
@@ -35,16 +35,16 @@ impl TextureStash {
 
 pub struct Light {
   // in world coordinates
-  pos: Point3,
+  pos: Vec3,
   color: Color,
 }
 
 impl Light {
-  pub fn new(pos: Point3, color: Color) -> Self {
+  pub fn new(pos: Vec3, color: Color) -> Self {
     Self { pos, color }
   }
 
-  pub fn pos(&self) -> &Point3 {
+  pub fn pos(&self) -> &Vec3 {
     &self.pos
   }
 
@@ -52,7 +52,7 @@ impl Light {
     &self.color
   }
 
-  pub fn project(&self, pt: &Point3, distance: f32) -> Point3 {
+  pub fn project(&self, pt: &Vec3, distance: f32) -> Vec3 {
     let dir = (*pt - self.pos).normalize();
     dir * distance + *pt
   }
@@ -60,7 +60,7 @@ impl Light {
   pub fn to_world_mesh(&self, mesh: Rc<Mesh>) -> WorldMesh {
     const SCALE: f32 = 0.03;
     WorldMesh::from(mesh)
-      .transformed(Mat4::from_scale(Vector3::new(SCALE, SCALE, SCALE).into()))
+      .transformed(Mat4::from_scale(Vec3::new(SCALE, SCALE, SCALE).into()))
       .transformed(Mat4::from_translation(self.pos.into()))
       .set_shader(PureColor::new(self.color))
       .double_faced(true)
@@ -95,7 +95,7 @@ pub struct ShaderContext<'a> {
 }
 
 impl<'a> ShaderContext<'a> {
-  pub fn get_texture(&self, handle: TextureHandle, uv: Vector2) -> Color {
+  pub fn get_texture(&self, handle: TextureHandle, uv: Vec2) -> Color {
     let texture = self.textures.get(handle);
 
     match self.options.texture_filter_mode {
@@ -107,7 +107,7 @@ impl<'a> ShaderContext<'a> {
 
 pub trait Shader: DynClone {
   fn vertex(&self, context: &ShaderContext, pt: &mut Pt) {
-    pt.clip_pos = context.camera.project_point3(pt.world_pos.into()).into();
+    pt.pos = context.camera.project_point3(pt.world_pos);
     // TODO: texture coordinates perspective correction
   }
 
@@ -136,12 +136,12 @@ impl Shader for PureColor {
 pub struct DiffuseShader {
   color: Color,
   light: Color,
-  light_pos: Point3,
+  light_pos: Vec3,
 }
 
 impl DiffuseShader {
   #[allow(unused)]
-  pub fn new(color: Color, light_pos: Point3) -> Self {
+  pub fn new(color: Color, light_pos: Vec3) -> Self {
     let light = COLOR::rgb(1.0, 1.0, 1.0);
 
     Self {
@@ -157,7 +157,7 @@ impl Shader for DiffuseShader {
     let light_angle = (self.light_pos - pt.world_pos).normalize();
     let light_intensity = f32::max(light_angle.dot(pt.normal.normalize()), 0.0);
     let ambient = self.color * 0.2;
-    let mut color = Vector4::ZERO;
+    let mut color = Vec4::ZERO;
     color += self.light * self.color * light_intensity + ambient;
     pt.color = color;
   }
@@ -166,14 +166,14 @@ impl Shader for DiffuseShader {
 #[derive(Clone)]
 pub struct SpecularShader {
   light: Color,
-  light_pos: Point3,
+  light_pos: Vec3,
   color: Color,
   shininess: f32,
 }
 
 impl SpecularShader {
   #![allow(unused)]
-  pub fn new(color: Color, light_pos: Point3) -> Self {
+  pub fn new(color: Color, light_pos: Vec3) -> Self {
     let shininess = 5.0;
     let light = COLOR::rgb(1.0, 1.0, 1.0);
     Self {
@@ -190,10 +190,10 @@ impl Shader for SpecularShader {
     let normal = pt.normal.normalize();
     let light_angle = (self.light_pos - pt.world_pos).normalize();
     let camera_angle =
-      Vector3::from(context.camera.project_point3(Point3::ZERO.into())) * -1.0;
+      Vec3::from(context.camera.project_point3(Vec3::ZERO.into())) * -1.0;
     let light_refl_angle = reflect(&light_angle, &normal).normalize();
     let ambient = self.color * 0.1;
-    let mut color = Vector4::ZERO;
+    let mut color = Vec4::ZERO;
 
     let light_intensity = f32::max(light_angle.dot(normal), 0.0);
     color += (self.light * self.color) * light_intensity;
@@ -251,7 +251,7 @@ impl SimpleMaterial {
     let normal = pt.normal.normalize();
     let light_angle = (*light.pos() - pt.world_pos).normalize();
     // this is
-    // Vector3::from(context.camera.project_point3(Point3::ZERO.into()))
+    // Vec3::from(context.camera.project_point3(Vec3::ZERO.into()))
     //   * -1.0;
 
     // diffuse color
@@ -268,7 +268,7 @@ impl SimpleMaterial {
     let normal = pt.normal.normalize();
     let light_angle = (*light.pos() - pt.world_pos).normalize();
     let light_refl_angle = reflect(&light_angle, &normal).normalize();
-    let camera_angle = Vector3::new(0.0, 0.0, -1.0);
+    let camera_angle = Vec3::new(0.0, 0.0, -1.0);
 
     let specular_sharpness =
       light_refl_angle.dot(camera_angle.normalize()).max(0.0);

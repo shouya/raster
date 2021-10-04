@@ -4,20 +4,15 @@ use glam;
 
 use crate::util::f32_cmp;
 
-pub type Vector4 = glam::Vec4;
-pub type Vector3 = glam::Vec3A;
-pub type Point3 = glam::Vec3A;
-pub type Vector2 = glam::Vec2;
-
-pub type Mat4 = glam::Mat4;
+pub use glam::{Vec4, Vec2, Vec3, Mat4, vec2, vec3, vec4};
 
 // a wrapper to make point3 Ord
 #[derive(Debug, Clone, Copy)]
-pub struct Point3Ord(Point3);
+pub struct Vec3Ord(Vec3);
 
-impl Point3Ord {
-  pub fn new(pt: Point3) -> Self {
-    Point3Ord(pt)
+impl Vec3Ord {
+  pub fn new(pt: Vec3) -> Self {
+    Vec3Ord(pt)
   }
 
   fn cmp_to(&self, other: &Self) -> cmp::Ordering {
@@ -27,27 +22,27 @@ impl Point3Ord {
   }
 }
 
-impl PartialOrd for Point3Ord {
+impl PartialOrd for Vec3Ord {
   fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
     Some(self.cmp_to(other))
   }
 }
 
-impl Ord for Point3Ord {
+impl Ord for Vec3Ord {
   fn cmp(&self, other: &Self) -> cmp::Ordering {
     self.cmp_to(other)
   }
 }
 
-impl PartialEq for Point3Ord {
+impl PartialEq for Vec3Ord {
   fn eq(&self, other: &Self) -> bool {
     self.cmp_to(other).is_eq()
   }
 }
 
-impl Eq for Point3Ord {}
+impl Eq for Vec3Ord {}
 
-impl std::hash::Hash for Point3Ord {
+impl std::hash::Hash for Vec3Ord {
   fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
     self.0.x.to_bits().hash(state);
     self.0.y.to_bits().hash(state);

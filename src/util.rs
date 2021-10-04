@@ -1,6 +1,6 @@
 use std::cmp;
 
-use crate::types::{Vector3};
+use crate::types::{Vec3};
 
 
 // copied from https://doc.rust-lang.org/src/core/num/f32.rs.html#959
@@ -13,6 +13,6 @@ pub fn f32_cmp(a: &f32, b: &f32) -> cmp::Ordering {
   left.cmp(&right)
 }
 
-pub fn reflect(l: &Vector3, n: &Vector3) -> Vector3 {
+pub fn reflect(l: &Vec3, n: &Vec3) -> Vec3 {
   *n * -2.0 * n.dot(*l) + *l
 }

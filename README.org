@@ -72,8 +72,12 @@ The UI is based on [[https://github.com/emilk/egui/tree/master/egui_glium][egui_
 
 ** References
 
+Since I didn't intentionally collect articles helpful to me until some point, please be aware that the list here is incomplete.
+
 - [[https://gabrielgambetta.com/computer-graphics-from-scratch/][Computer Graphics from Scratch by Gabriel Gambetta]]
 - [[https://en.wikipedia.org/wiki/Shadow_volume][Shadow volume - Wikipedia]]
+- [[https://learnwebgl.brown37.net/08_projections/projections_perspective.html][8.3 - Perspective Projections — LearnWebGL]]
+- [[https://graphicscompendium.com/opengl/24-clipping-culling][Graphics Compendium | Graphics Pipeline Review]]
 
 ** License
 

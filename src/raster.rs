@@ -661,6 +661,37 @@ impl<'a, T> Trig<T> {
     unreachable!()
   }
 
+  // clip in world space to avoid transforming point behind camera, see:
+  // https://stackoverflow.com/questions/3329308/perspective-projection-how-do-i-project-points-which-are-behind-camera
+  pub fn clip_camera_plane(self, camera: &Camera) -> SmallVec<[Trig<T>; 2]>
+  where
+    T: ToClipSpace + Lerp + Clone + Copy,
+  {
+    let world_to_camera = camera.view_matrix();
+    let camera_to_world = world_to_camera.inverse();
+
+    let init: SmallVec<[Trig<T>; 2]> = smallvec![self];
+
+    init
+      .into_iter()
+      .map(|mut t| {
+        t.map_in_place(|pt| {
+          let world_pos = *pt.to_clip();
+          *pt.to_clip_mut() = world_to_camera.transform_point3a(world_pos);
+        });
+        t
+      })
+      .flat_map(|t| t.clip_component(|p| p.to_clip().z, 0.1, 1.0))
+      .map(|mut t| {
+        t.map_in_place(|pt| {
+          let camera_pos = *pt.to_clip();
+          *pt.to_clip_mut() = camera_to_world.transform_point3a(camera_pos);
+        });
+        t
+      })
+      .collect()
+  }
+
   pub fn fully_visible(&self) -> bool
   where
     T: ToClipSpace,

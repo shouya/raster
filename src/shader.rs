@@ -111,8 +111,8 @@ impl<'a> ShaderContext<'a> {
 
 pub trait Shader: DynClone {
   fn vertex(&self, context: &ShaderContext, pt: &mut Pt) {
-    pt.pos = divw(context.camera * pt.world_pos);
     // TODO: texture coordinates perspective correction
+    pt.pos = context.camera * pt.world_pos;
   }
 
   fn fragment(&self, context: &ShaderContext, pt: &mut Pt);

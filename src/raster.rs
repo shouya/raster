@@ -3,10 +3,16 @@ use std::{collections::HashMap, rc::Rc, time::Instant};
 use approx::abs_diff_eq;
 use smallvec::{smallvec, SmallVec};
 
-use crate::{lerp::{lerp, lerp_closed_iter, Lerp}, shader::{
+use crate::{
+  lerp::{lerp, lerp_closed_iter, Lerp},
+  shader::{
     Light, PureColor, Shader, ShaderContext, ShaderOptions, SimpleMaterial,
     TextureStash,
-  }, types::{Mat4, Vec2, Vec3, Vec4Ord, Vec4}, util::{divw3, f32_cmp}, wavefront::Mesh};
+  },
+  types::{Mat4, Vec2, Vec3, Vec4, Vec4Ord},
+  util::{divw, divw3, f32_cmp},
+  wavefront::Mesh,
+};
 
 pub type Color = Vec4;
 
@@ -560,7 +566,7 @@ impl<'a, T> Trig<T> {
 
   pub fn clip(self) -> SmallVec<[Trig<T>; 2]>
   where
-    T: GenericPoint + Lerp + Clone + Copy,
+    T: GenericPoint,
   {
     if self.fully_visible() {
       return smallvec![self];
@@ -579,6 +585,12 @@ impl<'a, T> Trig<T> {
       .collect()
   }
 
+  fn divw_in_place(&mut self)
+    where T: GenericPoint
+  {
+    self.map_in_place(|pt| *pt.pos_mut() = divw(*pt.pos()))
+  }
+
   fn clip_component<F>(
     &self,
     get_comp: F,
@@ -586,7 +598,7 @@ impl<'a, T> Trig<T> {
     sign: f32,
   ) -> SmallVec<[Trig<T>; 2]>
   where
-    T: GenericPoint + Lerp + Clone + Copy,
+    T: GenericPoint,
     F: Fn(&T) -> f32,
   {
     let (va, vb, vc) = (self.a(), self.b(), self.c());
@@ -654,38 +666,6 @@ impl<'a, T> Trig<T> {
     }
 
     unreachable!()
-  }
-
-  // clip in world space to avoid transforming point behind camera, see:
-  // https://stackoverflow.com/questions/3329308/perspective-projection-how-do-i-project-points-which-are-behind-camera
-  #[allow(unused)]
-  pub fn clip_camera_plane(self, camera: &Camera) -> SmallVec<[Trig<T>; 2]>
-  where
-    T: GenericPoint + Lerp + Clone + Copy,
-  {
-    let world_to_camera = camera.view_matrix();
-    let camera_to_world = world_to_camera.inverse();
-
-    let init: SmallVec<[Trig<T>; 2]> = smallvec![self];
-
-    init
-      .into_iter()
-      .map(|mut t| {
-        t.map_in_place(|pt| {
-          let world_pos = *pt.pos();
-          *pt.pos_mut() = world_to_camera * world_pos;
-        });
-        t
-      })
-      .flat_map(|t| t.clip_component(|p| p.pos().z, 0.1, 1.0))
-      .map(|mut t| {
-        t.map_in_place(|pt| {
-          let camera_pos = *pt.pos();
-          *pt.pos_mut() = camera_to_world * camera_pos;
-        });
-        t
-      })
-      .collect()
   }
 
   pub fn fully_visible(&self) -> bool
@@ -811,9 +791,12 @@ impl<T> Face<T> {
     T: GenericPoint,
   {
     debug_assert!(self.vertices.len() >= 3);
-    let v1 = *self.vertices()[1].pos() - *self.vertices()[0].pos();
-    let v2 = *self.vertices()[2].pos() - *self.vertices()[0].pos();
-    divw3(v1).cross(divw3(v2))
+    let p1 = divw3(*self.vertices()[0].pos());
+    let p2 = divw3(*self.vertices()[1].pos());
+    let p3 = divw3(*self.vertices()[2].pos());
+    let v1 = p2 - p1;
+    let v2 = p3 - p1;
+    v1.cross(v2)
   }
 
   pub fn map_in_place<F>(&mut self, f: F)
@@ -1417,6 +1400,7 @@ impl Rasterizer {
     let (w, h) = self.size();
 
     for mut trig in trig.clip() {
+      trig.divw_in_place();
       trig.map_in_place(|pt| pt.scale_to_screen(self.size_f32()));
 
       for pt in trig.to_fill_pixels() {
@@ -1616,6 +1600,7 @@ impl Rasterizer {
 
   fn draw_triangle_clipped(&mut self, trig: Trig<Pt>, shader: &Rc<dyn Shader>) {
     for mut trig in trig.clip() {
+      trig.divw_in_place();
       trig.map_in_place(|pt| pt.scale_to_screen(self.size_f32()));
 
       for pt in trig.to_edge_pixels() {
@@ -1628,6 +1613,7 @@ impl Rasterizer {
     self.metric.triangles_rendered += 1;
 
     for mut trig in trig.clip() {
+      trig.divw_in_place();
       trig.map_in_place(|pt| pt.scale_to_screen(self.size_f32()));
 
       for pt in trig.to_fill_pixels() {

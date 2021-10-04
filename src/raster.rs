@@ -5,13 +5,13 @@ use smallvec::{smallvec, SmallVec};
 
 use crate::{
   lerp::{lerp, lerp_closed_iter, Lerp},
+  mesh::{Mesh, PolyVert},
   shader::{
     Light, PureColor, Shader, ShaderContext, ShaderOptions, SimpleMaterial,
     TextureStash,
   },
   types::{Mat4, Vec2, Vec3, Vec4, Vec4Ord},
   util::{divw, divw3, f32_cmp},
-  wavefront::Mesh,
 };
 
 pub type Color = Vec4;
@@ -733,6 +733,39 @@ pub struct Face<T> {
   double_faced: bool,
 }
 
+impl<T, const N: usize> From<[T; N]> for Face<T>
+where
+  T: Clone,
+{
+  fn from(verts: [T; N]) -> Self {
+    Self {
+      vertices: verts.into(),
+      double_faced: false,
+    }
+  }
+}
+
+impl<T> From<&[T]> for Face<T>
+where
+  T: Clone,
+{
+  fn from(verts: &[T]) -> Self {
+    Self {
+      vertices: verts.into(),
+      double_faced: false,
+    }
+  }
+}
+
+impl<T> From<Vec<T>> for Face<T> {
+  fn from(vertices: Vec<T>) -> Self {
+    Self {
+      vertices,
+      double_faced: false,
+    }
+  }
+}
+
 impl<T> Face<T> {
   pub fn new(double_faced: bool) -> Self {
     Face {
@@ -833,77 +866,17 @@ impl<T> Face<T> {
   }
 }
 
-impl<T, const N: usize> From<[T; N]> for Face<T> {
-  fn from(verts: [T; N]) -> Self {
-    Self {
-      vertices: Vec::from(verts),
-      double_faced: false,
-    }
-  }
-}
-
-#[derive(Debug, Clone)]
-pub struct IndexedPolyVert {
-  vertex_index: usize,
-  texture_index: Option<usize>,
-  normal_index: Option<usize>,
-}
-
-impl IndexedPolyVert {
-  pub fn new(vertex_index: usize) -> Self {
-    Self {
-      vertex_index,
-      texture_index: None,
-      normal_index: None,
-    }
-  }
-
-  pub fn new_texture(vertex_index: usize, texture_index: usize) -> Self {
-    Self {
-      vertex_index,
-      texture_index: Some(texture_index),
-      normal_index: None,
-    }
-  }
-
-  pub fn new_normal(vertex_index: usize, normal_index: usize) -> Self {
-    Self {
-      vertex_index,
-      normal_index: Some(normal_index),
-      texture_index: None,
-    }
-  }
-
-  pub fn new_texture_normal(
-    vertex_index: usize,
-    texture_index: usize,
-    normal_index: usize,
-  ) -> Self {
-    Self {
-      vertex_index,
-      texture_index: Some(texture_index),
-      normal_index: Some(normal_index),
-    }
-  }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct PolyVert<'a> {
-  pub vertex: &'a Vec3,
-  pub texture_coords: Option<&'a Vec2>,
-  pub normal: Option<&'a Vec3>,
-}
-
 #[derive(Clone)]
-pub struct WorldMesh {
+pub struct WorldMesh<T = PolyVert> {
   pub transform: Option<Mat4>,
   pub double_faced: bool,
   pub casts_shadow: bool,
-  pub mesh: Rc<Mesh>,
+  pub mesh: Rc<Mesh<T>>,
 }
 
-impl From<Rc<Mesh>> for WorldMesh {
-  fn from(mesh: Rc<Mesh>) -> Self {
+impl<T> From<Rc<Mesh<T>>> for WorldMesh<T> {
+  fn from(mesh: Rc<Mesh<T>>) -> Self {
+    assert!(mesh.is_sealed());
     Self {
       mesh,
       transform: None,
@@ -913,8 +886,9 @@ impl From<Rc<Mesh>> for WorldMesh {
   }
 }
 
-impl From<Mesh> for WorldMesh {
-  fn from(mesh: Mesh) -> Self {
+impl<T> From<Mesh<T>> for WorldMesh<T> {
+  fn from(mesh: Mesh<T>) -> Self {
+    assert!(mesh.is_sealed());
     Self {
       mesh: Rc::new(mesh),
       transform: None,
@@ -924,17 +898,7 @@ impl From<Mesh> for WorldMesh {
   }
 }
 
-impl WorldMesh {
-  #[allow(unused)]
-  pub fn new() -> Self {
-    Self {
-      transform: None,
-      mesh: Rc::new(Default::default()),
-      double_faced: false,
-      casts_shadow: true,
-    }
-  }
-
+impl<T> WorldMesh<T> {
   pub fn double_faced(mut self, double_faced: bool) -> Self {
     self.double_faced = double_faced;
     self
@@ -945,38 +909,35 @@ impl WorldMesh {
     self
   }
 
-  fn mesh_faces(&self) -> impl Iterator<Item = Face<PolyVert<'_>>> {
+  pub fn faces(&self) -> impl Iterator<Item = Face<T>> + '_
+    where T: Copy
+  {
     self.mesh.faces.iter().map(move |f| self.get_face(f))
   }
 
-  pub fn set_shader(mut self, shader: impl Shader + 'static) -> Self {
+  pub fn set_shader(mut self, shader: impl Shader + 'static) -> Self
+  where
+    T: Clone,
+  {
     // notice: make_mut will clone a new instance of the shader
     Rc::make_mut(&mut self.mesh).set_material(shader);
     self
   }
 
-  // Return faces in world coordinates
-  pub fn faces(&self) -> impl Iterator<Item = Face<Pt>> + '_ {
-    self
-      .mesh_faces()
-      .map(move |face| face.map(|vert| Pt::from(&vert)))
-  }
-
-  fn get_face(&self, face: &Face<IndexedPolyVert>) -> Face<PolyVert<'_>> {
-    let mut res = Face::new(self.double_faced);
+  fn get_face(&self, face: &Face<usize>) -> Face<T>
+  where
+    T: Copy,
+  {
     let mesh = &self.mesh;
-    for vert in face.vertices() {
-      let vertex = &mesh.vertices[vert.vertex_index];
-      let texture_coords = vert.texture_index.map(|i| &mesh.texture_coords[i]);
-      let normal = vert.normal_index.map(|i| &mesh.vertex_normals[i]);
+    let vertices = face
+      .vertices()
+      .iter()
+      .map(|i| mesh.vertices[*i])
+      .collect::<Vec<_>>();
 
-      res.add_vert(PolyVert {
-        vertex,
-        texture_coords,
-        normal,
-      })
-    }
-    res
+    let mut face_t: Face<T> = vertices.into();
+    face_t.double_faced = face.double_faced;
+    face_t
   }
 
   pub fn transformed(mut self, transform: Mat4) -> Self {
@@ -993,7 +954,9 @@ impl WorldMesh {
       .map(|x| x.clone())
       .unwrap_or_else(|| Rc::new(SimpleMaterial::plaster()))
   }
+}
 
+impl WorldMesh<PolyVert> {
   pub fn apply_transformation(&self) -> Self {
     match self.transform {
       Some(transform) => {
@@ -1008,13 +971,31 @@ impl WorldMesh {
       None => self.clone(),
     }
   }
+
+  pub fn into_pt_mesh(self) -> WorldMesh<Pt> {
+    let Self {
+      transform,
+      double_faced,
+      casts_shadow,
+      ..
+    } = self;
+    let mesh = (&*self.mesh).clone();
+    let mesh = Rc::new(mesh.map(|vert| Pt::from(vert)));
+
+    WorldMesh {
+      mesh,
+      transform,
+      double_faced,
+      casts_shadow,
+    }
+  }
 }
 
 pub struct Scene {
   textures: Rc<TextureStash>,
   camera: Camera,
   lights: Vec<Light>,
-  meshes: Vec<WorldMesh>,
+  meshes: Vec<WorldMesh<PolyVert>>,
 }
 
 impl Scene {
@@ -1091,14 +1072,14 @@ pub struct Pt {
   pub buf_v3: Option<Vec3>,
 }
 
-impl<'a> From<&PolyVert<'a>> for Pt {
-  fn from(v: &PolyVert<'a>) -> Self {
-    let mut pt = Self::new(*v.vertex);
-    if let Some(uv) = v.texture_coords {
-      pt.set_uv(*uv);
+impl<'a> From<PolyVert> for Pt {
+  fn from(v: PolyVert) -> Self {
+    let mut pt = Self::new(v.pos);
+    if let Some(uv) = v.uv {
+      pt.set_uv(uv);
     }
     if let Some(normal) = v.normal {
-      pt.set_normal(*normal);
+      pt.set_normal(normal);
     }
     pt
   }
@@ -1226,7 +1207,7 @@ impl ShadowVolume {
 
   pub fn add_world_mesh(
     &mut self,
-    mesh: &WorldMesh,
+    mesh: &WorldMesh<Pt>,
     camera: &Camera,
     light: &Light,
   ) {
@@ -1244,12 +1225,16 @@ impl ShadowVolume {
   }
 
   // for rendering the shadow volume
-  pub fn to_world_mesh(&self) -> WorldMesh {
+  pub fn to_world_mesh(&self) -> WorldMesh<Pt> {
     let mut mesh = Mesh::new();
     for face in self.faces() {
       let face_vec3 = face.clone().map(divw3);
       mesh.add_simple_face(face_vec3.as_slice())
     }
+
+    mesh.seal();
+
+    let mesh = mesh.map(|v| Pt::from(v));
 
     WorldMesh::from(mesh)
       .set_shader(PureColor::new(COLOR::rgb(1.0, 0.0, 0.0)))
@@ -1369,7 +1354,7 @@ impl Rasterizer {
 
     for mesh in scene.iter_meshes() {
       let shader = mesh.shader();
-      let mesh = mesh.apply_transformation();
+      let mesh = mesh.apply_transformation().into_pt_mesh();
 
       volume.add_world_mesh(&mesh, camera, light);
 
@@ -1451,7 +1436,7 @@ impl Rasterizer {
 
     for mesh in scene.iter_meshes() {
       let shader = mesh.shader();
-      let mesh = mesh.apply_transformation();
+      let mesh = mesh.apply_transformation().into_pt_mesh();
 
       for mut face in mesh.faces() {
         face.map_in_place(|mut p| shader.vertex(&context, &mut p));

@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use dyn_clone::DynClone;
 
-use crate::{raster::{Color, Image, Pt, WorldMesh, COLOR}, types::{Mat4, Vec2, Vec3, Vec4}, util::{divw, divw3, reflect}, wavefront::Mesh};
+use crate::{mesh::{Mesh, PolyVert}, raster::{Color, Image, Pt, WorldMesh, COLOR}, types::{Mat4, Vec2, Vec3, Vec4}, util::{divw, divw3, reflect}};
 
 pub type TextureHandle = usize;
 
@@ -61,7 +61,7 @@ impl Light {
     dir * distance + pt
   }
 
-  pub fn to_world_mesh(&self, mesh: Rc<Mesh>) -> WorldMesh {
+  pub fn to_world_mesh(&self, mesh: Rc<Mesh<PolyVert>>) -> WorldMesh<PolyVert> {
     const SCALE: f32 = 0.03;
     WorldMesh::from(mesh)
       .transformed(Mat4::from_scale(Vec3::new(SCALE, SCALE, SCALE).into()))

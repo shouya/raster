@@ -5,9 +5,10 @@ use std::{
 use anyhow::{ensure, Result};
 
 use crate::{
-  raster::{Color, Face, Image, IndexedPolyVert, COLOR},
-  shader::{Shader, SimpleMaterial, TextureStash},
-  types::{Mat4, Vec2, Vec3},
+  mesh::Mesh,
+  raster::{Color, Image, COLOR},
+  shader::{SimpleMaterial, TextureStash},
+  types::{Vec2, Vec3},
 };
 
 struct Mtl {
@@ -85,87 +86,6 @@ impl Mtl {
   }
 }
 
-#[derive(Default)]
-pub struct Mesh {
-  pub material: Option<Rc<dyn Shader>>,
-  pub vertices: Vec<Vec3>,
-  pub vertex_normals: Vec<Vec3>,
-  pub texture_coords: Vec<Vec2>,
-  pub faces: Vec<Face<IndexedPolyVert>>,
-}
-
-impl Clone for Mesh {
-  fn clone(&self) -> Mesh {
-    let Mesh {
-      material,
-      vertices,
-      vertex_normals,
-      texture_coords,
-      faces,
-    } = self;
-
-    let material = material
-      .as_ref()
-      .map(|x| Rc::from(dyn_clone::clone_box(&**x)));
-
-    Mesh {
-      material,
-      vertices: vertices.clone(),
-      vertex_normals: vertex_normals.clone(),
-      texture_coords: texture_coords.clone(),
-      faces: faces.clone(),
-    }
-  }
-}
-
-impl Mesh {
-  #[allow(unused)]
-  pub fn new() -> Self {
-    Default::default()
-  }
-
-  #[allow(unused)]
-  pub fn add_simple_face(&mut self, vertices: &[Vec3]) {
-    let n = self.vertices.len();
-    self.vertices.extend_from_slice(vertices);
-    let mut face = Face::new(false);
-    for i in 0..vertices.len() {
-      face.add_vert(IndexedPolyVert::new(n + i));
-    }
-    self.faces.push(face);
-  }
-
-  pub fn apply_transformation(&self, matrix: &Mat4) -> Self {
-    let vertices = self
-      .vertices
-      .iter()
-      .map(|p| matrix.transform_point3(*p))
-      .collect();
-    let vertex_normals = self
-      .vertex_normals
-      .iter()
-      .map(|v| matrix.transform_vector3(*v))
-      .collect();
-
-    let material = self
-      .material
-      .as_ref()
-      .map(|x| Rc::from(dyn_clone::clone_box(&**x)));
-
-    Self {
-      vertices,
-      vertex_normals,
-      material,
-      texture_coords: self.texture_coords.clone(),
-      faces: self.faces.clone(),
-    }
-  }
-
-  pub fn set_material(&mut self, material: impl Shader + 'static) {
-    self.material = Some(Rc::new(material));
-  }
-}
-
 struct Obj {
   pub mtl: Mtl,
   pub objs: Vec<Mesh>,
@@ -187,7 +107,10 @@ impl Obj {
 
   pub fn parse(s: &str, rel_path: &Path) -> Result<Self> {
     let mut obj = Obj::new();
-    let mut curr_mesh = Mesh::default();
+    let mut curr_mesh = Mesh::new();
+    let mut v = Vec::new();
+    let mut vt = Vec::new();
+    let mut vn = Vec::new();
 
     for line in s.lines() {
       if line.starts_with("#") {
@@ -198,10 +121,14 @@ impl Obj {
       }
       let segments = line.split(" ").collect::<Vec<_>>();
       match segments.as_slice() {
-        ["v", vs @ ..] => curr_mesh.vertices.push(parse_point3(vs)?),
-        ["vn", vs @ ..] => curr_mesh.vertex_normals.push(parse_vec3(vs)?),
-        ["vt", vs @ ..] => curr_mesh.texture_coords.push(parse_vec2(vs)?),
-        ["f", fs @ ..] => curr_mesh.faces.push(parse_face(fs)?),
+        ["v", vs @ ..] => v.push(parse_point3(vs)?),
+        ["vt", vs @ ..] => vt.push(parse_vec2(vs)?),
+        ["vn", vs @ ..] => vn.push(parse_vec3(vs)?),
+        ["f", fs @ ..] => {
+          let index = parse_face(fs)?;
+          let polyverts = Self::resolve_verts(index, &v, &vt, &vn);
+          curr_mesh.add_face(&polyverts);
+        }
         ["mtllib", f] => {
           if let Ok(mtl) = Mtl::load(&rel_path.join(Path::new(f))) {
             obj.mtl = mtl;
@@ -210,8 +137,9 @@ impl Obj {
         ["usemtl", m] => {
           // TODO: change to a less clumsy way
           if curr_mesh.faces.len() > 0 {
+            curr_mesh.seal();
             obj.objs.push(curr_mesh.clone());
-            curr_mesh.faces = vec![];
+            curr_mesh = Mesh::new();
           }
           // it's okay that the material is not found
           if let Ok(mat) = obj.mtl.get(m) {
@@ -224,10 +152,23 @@ impl Obj {
 
     // TODO: change to a less clumsy way
     if curr_mesh.faces.len() > 0 {
+      curr_mesh.seal();
       obj.objs.push(curr_mesh);
     }
 
     Ok(obj)
+  }
+
+  fn resolve_verts(
+    index: Vec<(usize, Option<usize>, Option<usize>)>,
+    v: &Vec<Vec3>,
+    vt: &Vec<Vec2>,
+    vn: &Vec<Vec3>,
+  ) -> Vec<(Vec3, Option<Vec2>, Option<Vec3>)> {
+    index
+      .into_iter()
+      .map(|(vi, vti, vni)| (v[vi], vti.map(|i| vt[i]), vni.map(|i| vn[i])))
+      .collect()
   }
 }
 
@@ -238,27 +179,26 @@ fn parse_floats(slices: &[&str]) -> Result<Vec<f32>> {
     .collect::<Result<Vec<_>, _>>()
 }
 
-fn parse_face(slices: &[&str]) -> Result<Face<IndexedPolyVert>> {
-  let mut face = Face::new(false);
+fn parse_face(
+  slices: &[&str],
+) -> Result<Vec<(usize, Option<usize>, Option<usize>)>> {
+  let mut res = Vec::new();
   for v in slices {
     let indices: Vec<Result<usize, _>> =
       v.split("/").map(|i| usize::from_str(i)).collect();
 
-    match indices.as_slice() {
-      [Ok(vi)] => face.add_vert(IndexedPolyVert::new(vi - 1)),
-      [Ok(vi), Ok(ti)] => {
-        face.add_vert(IndexedPolyVert::new_texture(vi - 1, ti - 1))
-      }
-      [Ok(vi), Ok(ti), Ok(ni)] => face
-        .add_vert(IndexedPolyVert::new_texture_normal(vi - 1, ti - 1, ni - 1)),
-      [Ok(vi), Err(_), Ok(ni)] => {
-        face.add_vert(IndexedPolyVert::new_normal(vi - 1, ni - 1))
-      }
+    let vert = match indices.as_slice() {
+      [Ok(vi)] => (vi - 1, None, None),
+      [Ok(vi), Ok(ti)] => (vi - 1, Some(ti - 1), None),
+      [Ok(vi), Ok(ti), Ok(ni)] => (vi - 1, Some(ti - 1), Some(ni - 1)),
+      [Ok(vi), Err(_), Ok(ni)] => (vi - 1, None, Some(ni - 1)),
       _ => anyhow::bail!("Invalid face: {:?}", indices),
-    }
+    };
+
+    res.push(vert)
   }
 
-  Ok(face)
+  Ok(res)
 }
 
 fn parse_color(color: &[&str]) -> Result<Color> {

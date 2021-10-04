@@ -28,6 +28,7 @@ mod raster;
 mod shader;
 mod types;
 mod util;
+mod mesh;
 mod wavefront;
 
 use crate::{

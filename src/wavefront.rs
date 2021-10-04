@@ -7,7 +7,7 @@ use anyhow::{ensure, Result};
 use crate::{
   raster::{Color, Face, Image, IndexedPolyVert, COLOR},
   shader::{Shader, SimpleMaterial, TextureStash},
-  types::{Mat4, Vec3, Vec2},
+  types::{Mat4, Vec2, Vec3},
 };
 
 struct Mtl {

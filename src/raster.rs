@@ -585,8 +585,22 @@ impl<'a, T> Trig<T> {
       .collect()
   }
 
+  pub fn clip_on_w(self) -> SmallVec<[Trig<T>; 2]>
+  where
+    T: GenericPoint,
+  {
+    let init: SmallVec<[&Trig<T>; 2]> = smallvec![&self];
+
+    init
+      .into_iter()
+      // not clipping on 0.0 to avoid infinity
+      .flat_map(|t| t.clip_component(|p| p.pos().w, 0.001, -1.0))
+      .collect()
+  }
+
   fn divw_in_place(&mut self)
-    where T: GenericPoint
+  where
+    T: GenericPoint,
   {
     self.map_in_place(|pt| *pt.pos_mut() = divw(*pt.pos()))
   }
@@ -673,8 +687,10 @@ impl<'a, T> Trig<T> {
     T: GenericPoint,
   {
     let comp_in_range = |v| (-1.0..=1.0).contains(&v);
-    let pt_in_range =
-      |p: &Vec4| comp_in_range(p.x) && comp_in_range(p.y) && comp_in_range(p.z);
+    let pt_in_range = |p4: &Vec4| {
+      let p3 = divw3(*p4);
+      comp_in_range(p3.x) && comp_in_range(p3.y) && comp_in_range(p3.z)
+    };
 
     pt_in_range(self.a().pos())
       && pt_in_range(self.b().pos())
@@ -1599,12 +1615,16 @@ impl Rasterizer {
   }
 
   fn draw_triangle_clipped(&mut self, trig: Trig<Pt>, shader: &Rc<dyn Shader>) {
-    for mut trig in trig.clip() {
+    for mut trig in trig.clip_on_w() {
       trig.divw_in_place();
-      trig.map_in_place(|pt| pt.scale_to_screen(self.size_f32()));
 
-      for pt in trig.to_edge_pixels() {
-        self.rasterize_pixel(pt, shader);
+      for mut trig in trig.clip() {
+        trig.divw_in_place();
+        trig.map_in_place(|pt| pt.scale_to_screen(self.size_f32()));
+
+        for pt in trig.to_edge_pixels() {
+          self.rasterize_pixel(pt, shader);
+        }
       }
     }
   }
@@ -1612,12 +1632,14 @@ impl Rasterizer {
   fn fill_triangle(&mut self, trig: Trig<Pt>, shader: &Rc<dyn Shader>) {
     self.metric.triangles_rendered += 1;
 
-    for mut trig in trig.clip() {
+    for mut trig in trig.clip_on_w() {
       trig.divw_in_place();
-      trig.map_in_place(|pt| pt.scale_to_screen(self.size_f32()));
+      for mut trig in trig.clip() {
+        trig.map_in_place(|pt| pt.scale_to_screen(self.size_f32()));
 
-      for pt in trig.to_fill_pixels() {
-        self.rasterize_pixel(pt, shader);
+        for pt in trig.to_fill_pixels() {
+          self.rasterize_pixel(pt, shader);
+        }
       }
     }
   }

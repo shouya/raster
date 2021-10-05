@@ -1,4 +1,4 @@
-use std::{collections::HashMap, rc::Rc, time::Instant};
+use std::{collections::HashMap, f32::INFINITY, rc::Rc, time::Instant};
 
 use approx::abs_diff_eq;
 use smallvec::{smallvec, SmallVec};
@@ -284,7 +284,7 @@ impl<T> Line<T> {
   // The caller needs to ensure "self" is in screen coordinates
   pub fn to_horizontal_pixels(self) -> impl Iterator<Item = T>
   where
-    T: GenericPoint + Clone + Copy + Lerp,
+    T: GenericPoint,
   {
     // ensure the line is indeed flat
     debug_assert!((self.a().pos().y - self.b().pos().y) as i32 == 0);
@@ -297,7 +297,7 @@ impl<T> Line<T> {
 
   pub fn to_pixels(self) -> impl Iterator<Item = T>
   where
-    T: GenericPoint + Clone + Copy + Lerp,
+    T: GenericPoint,
   {
     let a = self.a().pos();
     let b = self.b().pos();
@@ -307,9 +307,42 @@ impl<T> Line<T> {
     lerp_closed_iter(self.ends[0], self.ends[1], n + 1)
   }
 
-  pub fn clip(mut self) -> impl Iterator<Item = Line<T>>
+  pub fn clip(self) -> impl Iterator<Item = Line<T>>
   where
-    T: GenericPoint + Clone + Copy + Lerp,
+    T: GenericPoint,
+  {
+    self
+      .clip_on_camera_plane()
+      .into_iter()
+      .flat_map(|mut line| {
+        line.divw_in_place();
+        line.clip_on_frustum()
+      })
+  }
+
+  fn clip_on_camera_plane(mut self) -> impl Iterator<Item = Line<T>>
+  where
+    T: GenericPoint,
+  {
+    let get_w = |p: &Vec4| p.w;
+
+    if !self.clip_component(get_w, 0.0001, INFINITY) {
+      return None.into_iter();
+    }
+
+    Some(self).into_iter()
+  }
+
+  fn divw_in_place(&mut self)
+  where
+    T: GenericPoint,
+  {
+    self.map_in_place(|pt| *pt.pos_mut() = divw(*pt.pos()))
+  }
+
+  fn clip_on_frustum(mut self) -> impl Iterator<Item = Line<T>>
+  where
+    T: GenericPoint,
   {
     let get_x = |p: &Vec4| p.x;
     let get_y = |p: &Vec4| p.y;
@@ -330,7 +363,7 @@ impl<T> Line<T> {
 
   fn clip_component<F>(&mut self, get_comp: F, min: f32, max: f32) -> bool
   where
-    T: GenericPoint + Clone + Copy + Lerp,
+    T: GenericPoint,
     F: Fn(&Vec4) -> f32,
   {
     let mut av = get_comp(self.a().pos());
@@ -469,7 +502,7 @@ impl<'a, T> Trig<T> {
   // the caller needs to ensure self.vert.pos are of screen coords
   pub fn to_fill_pixels(self) -> impl Iterator<Item = T>
   where
-    T: GenericPoint + Clone + Copy + Lerp,
+    T: GenericPoint,
   {
     let [upper, lower] = self.horizontally_split();
     let upper = upper
@@ -485,7 +518,7 @@ impl<'a, T> Trig<T> {
 
   pub fn to_edge_pixels(self) -> impl Iterator<Item = T>
   where
-    T: GenericPoint + Clone + Copy + Lerp,
+    T: GenericPoint,
   {
     self.edges().flat_map(|line| line.to_pixels())
   }
@@ -494,7 +527,7 @@ impl<'a, T> Trig<T> {
   // self.vert.pos are of screen coordinates
   pub fn upper_trig_to_horizontal_lines(self) -> impl Iterator<Item = Line<T>>
   where
-    T: GenericPoint + Clone + Copy + Lerp,
+    T: GenericPoint,
   {
     let top = self.a();
     let bottom_left = self.b();
@@ -512,7 +545,7 @@ impl<'a, T> Trig<T> {
 
   pub fn lower_trig_to_horizontal_lines(self) -> impl Iterator<Item = Line<T>>
   where
-    T: GenericPoint + Clone + Copy + Lerp,
+    T: GenericPoint,
   {
     let top_left = self.a();
     let top_right = self.b();
@@ -531,7 +564,7 @@ impl<'a, T> Trig<T> {
   // returns two triangles whose vertices are ordered by y values
   pub fn horizontally_split(mut self) -> [Option<Trig<T>>; 2]
   where
-    T: GenericPoint + Clone + Copy + Lerp,
+    T: GenericPoint,
   {
     const EPS: f32 = 0.1;
     self
@@ -1495,21 +1528,18 @@ impl Rasterizer {
     for mut face in shadow_mesh.faces() {
       // make sure shadow volume is drawn above the actual mesh
       face.map_in_place(|p| p.pos.z -= 0.000001);
-
       self.metric.vertices_shaded += face.len();
 
       // draw wireframe
       for line in face.edges() {
-        self.draw_line(line, &shader);
+        for line in line.clip() {
+          self.draw_line(line, &shader);
+        }
       }
     }
   }
 
-  pub fn rasterize_face(
-    &mut self,
-    face: &Face<Pt>,
-    shader: Rc<dyn Shader>,
-  ) {
+  pub fn rasterize_face(&mut self, face: &Face<Pt>, shader: Rc<dyn Shader>) {
     use RasterizerMode::*;
 
     match self.mode {

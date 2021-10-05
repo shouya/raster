@@ -1229,12 +1229,12 @@ impl ShadowVolume {
     let mut mesh = Mesh::new();
     for face in self.faces() {
       let face_vec3 = face.clone().map(divw3);
-      mesh.add_simple_face(face_vec3.as_slice())
+      mesh.add_face(face_vec3.as_slice())
     }
 
     mesh.seal();
 
-    let mesh = mesh.map(|v| Pt::from(v));
+    let mesh = mesh.map(|v: PolyVert| Pt::from(v));
 
     WorldMesh::from(mesh)
       .set_shader(PureColor::new(COLOR::rgb(1.0, 0.0, 0.0)))

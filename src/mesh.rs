@@ -1,4 +1,4 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::HashMap, hash::Hash, rc::Rc};
 
 use crate::{
   raster::Face,
@@ -28,6 +28,16 @@ impl std::hash::Hash for PolyVert {
   }
 }
 
+impl From<Vec3> for PolyVert {
+  fn from(v: Vec3) -> Self {
+    Self {
+      pos: v,
+      uv: None,
+      normal: None,
+    }
+  }
+}
+
 impl From<(Vec3, Option<Vec2>, Option<Vec3>)> for PolyVert {
   fn from(v: (Vec3, Option<Vec2>, Option<Vec3>)) -> Self {
     Self {
@@ -38,12 +48,13 @@ impl From<(Vec3, Option<Vec2>, Option<Vec3>)> for PolyVert {
   }
 }
 
-impl PolyVert {
-  pub fn pos(pos: Vec3) -> Self {
-    Self {
-      pos,
-      ..Default::default()
-    }
+impl<T> From<&T> for PolyVert
+where
+  T: Copy,
+  Self: From<T>,
+{
+  fn from(v: &T) -> Self {
+    PolyVert::from(*v)
   }
 }
 
@@ -95,7 +106,7 @@ impl<T> Mesh<T> {
     }
   }
 
-  // A sealed mesh is allowed to perform "expensive"
+  // A sealed mesh is allowed to perform otherwise "expensive"
   // operations like clone, as_ref, etc.
   //
   // However, a sealed mesh cannot add faces any more.
@@ -134,31 +145,26 @@ impl<T> Mesh<T> {
   pub fn set_material(&mut self, material: impl Shader + 'static) {
     self.material = Some(Rc::new(material));
   }
-}
 
-impl Mesh<PolyVert> {
-  #[allow(unused)]
-  pub fn add_simple_face(&mut self, vertices: &[Vec3]) {
+  pub fn add_face<S>(&mut self, vertices: &[S])
+  where
+    S: Copy,
+    T: From<S> + Clone + Hash + Eq,
+  {
     assert!(!self.is_sealed());
+
     let mut face = Face::new(false);
     for i in 0..vertices.len() {
-      let vert = PolyVert::pos(vertices[i]);
+      let vert = T::from(vertices[i]);
       face.add_vert(self.add_vert(vert));
     }
     self.faces.push(face);
   }
 
-  pub fn add_face(&mut self, vertices: &[(Vec3, Option<Vec2>, Option<Vec3>)]) {
-    assert!(!self.is_sealed());
-    let mut face = Face::new(false);
-    for i in 0..vertices.len() {
-      let vert = PolyVert::from(vertices[i]);
-      face.add_vert(self.add_vert(vert));
-    }
-    self.faces.push(face);
-  }
-
-  fn add_vert(&mut self, vert: PolyVert) -> usize {
+  fn add_vert(&mut self, vert: T) -> usize
+  where
+    T: Clone + Hash + Eq,
+  {
     let index = self.index.as_mut().unwrap();
 
     match index.get(&vert) {
@@ -171,7 +177,9 @@ impl Mesh<PolyVert> {
       }
     }
   }
+}
 
+impl Mesh<PolyVert> {
   pub fn apply_transformation(&self, matrix: &Mat4) -> Self {
     assert!(self.is_sealed());
 

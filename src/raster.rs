@@ -233,6 +233,10 @@ impl Camera {
     self.view
   }
 
+  pub fn projection_matrix(&self) -> Mat4 {
+    self.projection
+  }
+
   pub fn transformd(&mut self, trans: &Mat4) {
     self.view *= trans.inverse();
   }
@@ -564,7 +568,20 @@ impl<'a, T> Trig<T> {
     [Some(upper_trig), Some(lower_trig)]
   }
 
-  pub fn clip(self) -> SmallVec<[Trig<T>; 2]>
+  pub fn clip(self) -> impl Iterator<Item = Self>
+  where
+    T: GenericPoint,
+  {
+    self
+      .clip_on_camera_plane()
+      .into_iter()
+      .flat_map(|mut trig| {
+        trig.divw_in_place();
+        trig.clip_on_frustum()
+      })
+  }
+
+  pub fn clip_on_frustum(self) -> SmallVec<[Trig<T>; 2]>
   where
     T: GenericPoint,
   {
@@ -585,17 +602,12 @@ impl<'a, T> Trig<T> {
       .collect()
   }
 
-  pub fn clip_on_w(self) -> SmallVec<[Trig<T>; 2]>
+  pub fn clip_on_camera_plane(self) -> impl Iterator<Item = Self>
   where
     T: GenericPoint,
   {
-    let init: SmallVec<[&Trig<T>; 2]> = smallvec![&self];
-
-    init
-      .into_iter()
-      // not clipping on 0.0 to avoid infinity
-      .flat_map(|t| t.clip_component(|p| p.pos().w, 0.001, -1.0))
-      .collect()
+    // not clipping on 0.0 to avoid infinity
+    self.clip_component(|p| p.pos().w, 0.001, -1.0).into_iter()
   }
 
   fn divw_in_place(&mut self)
@@ -910,7 +922,8 @@ impl<T> WorldMesh<T> {
   }
 
   pub fn faces(&self) -> impl Iterator<Item = Face<T>> + '_
-    where T: Copy
+  where
+    T: Copy,
   {
     self.mesh.faces.iter().map(move |f| self.get_face(f))
   }
@@ -922,6 +935,10 @@ impl<T> WorldMesh<T> {
     // notice: make_mut will clone a new instance of the shader
     Rc::make_mut(&mut self.mesh).set_material(shader);
     self
+  }
+
+  pub fn model_matrix(&self) -> Mat4 {
+    self.transform.unwrap_or(Mat4::IDENTITY)
   }
 
   fn get_face(&self, face: &Face<usize>) -> Face<T>
@@ -944,6 +961,14 @@ impl<T> WorldMesh<T> {
     let current_transform = self.transform.unwrap_or(Mat4::IDENTITY);
     self.transform = Some(transform * current_transform);
     self
+  }
+
+  pub fn map_in_place<F>(&mut self, f: F)
+  where
+    F: Fn(&mut T),
+    T: Clone,
+  {
+    Rc::make_mut(&mut self.mesh).map_in_place(f)
   }
 
   pub fn shader(&self) -> Rc<dyn Shader> {
@@ -972,7 +997,7 @@ impl WorldMesh<PolyVert> {
     }
   }
 
-  pub fn into_pt_mesh(self) -> WorldMesh<Pt> {
+  pub fn to_pt_mesh(&self) -> WorldMesh<Pt> {
     let Self {
       transform,
       double_faced,
@@ -984,9 +1009,9 @@ impl WorldMesh<PolyVert> {
 
     WorldMesh {
       mesh,
-      transform,
-      double_faced,
-      casts_shadow,
+      transform: transform.clone(),
+      double_faced: double_faced.clone(),
+      casts_shadow: casts_shadow.clone(),
     }
   }
 }
@@ -1317,6 +1342,22 @@ impl Rasterizer {
     self.shadow_mode = shadow_mode;
   }
 
+  fn meshes_with_vertex_shaded(&self, scene: &Scene) -> Vec<WorldMesh<Pt>> {
+    let mut context = self.shader_context(scene);
+
+    scene
+      .iter_meshes()
+      .map(|world_mesh| {
+        context.update_model_matrix(world_mesh.model_matrix());
+        let shader = world_mesh.shader();
+
+        let mut mesh_in_pt = world_mesh.to_pt_mesh();
+        mesh_in_pt.map_in_place(|mut pt| shader.vertex(&context, &mut pt));
+        mesh_in_pt
+      })
+      .collect()
+  }
+
   pub fn rasterize(&mut self, scene: &Scene) {
     let now = Instant::now();
 
@@ -1354,7 +1395,7 @@ impl Rasterizer {
 
     for mesh in scene.iter_meshes() {
       let shader = mesh.shader();
-      let mesh = mesh.apply_transformation().into_pt_mesh();
+      let mesh = mesh.apply_transformation().to_pt_mesh();
 
       volume.add_world_mesh(&mesh, camera, light);
 
@@ -1432,23 +1473,17 @@ impl Rasterizer {
   }
 
   pub fn rasterize_pixels(&mut self, scene: &Scene) {
-    let context = self.shader_context(scene);
-
-    for mesh in scene.iter_meshes() {
+    for mesh in self.meshes_with_vertex_shaded(scene) {
       let shader = mesh.shader();
-      let mesh = mesh.apply_transformation().into_pt_mesh();
 
-      for mut face in mesh.faces() {
-        face.map_in_place(|mut p| shader.vertex(&context, &mut p));
-        self.metric.vertices_shaded += face.len();
-
+      for face in mesh.faces() {
         if face.is_hidden() {
           self.metric.hidden_face_removed += 1;
           continue;
         }
 
         self.metric.faces_rendered += 1;
-        self.rasterize_face(&mut face, shader.clone());
+        self.rasterize_face(&face, shader.clone());
       }
     }
   }
@@ -1472,7 +1507,7 @@ impl Rasterizer {
 
   pub fn rasterize_face(
     &mut self,
-    face: &mut Face<Pt>,
+    face: &Face<Pt>,
     shader: Rc<dyn Shader>,
   ) {
     use RasterizerMode::*;
@@ -1591,25 +1626,28 @@ impl Rasterizer {
 
   // fill a triangle that is flat at bottom
   fn shader_context<'b>(&self, scene: &'b Scene) -> ShaderContext<'b> {
+    let projection_mat4 = scene.camera().projection_matrix();
+    let view_mat4 = scene.camera().view_matrix();
+    let model_mat4 = Mat4::IDENTITY;
+    let clip_mat4 = projection_mat4 * view_mat4 * model_mat4;
+
     ShaderContext {
+      view_mat4,
+      projection_mat4,
+      model_mat4,
+      clip_mat4,
       textures: scene.texture_stash(),
-      camera: scene.camera().matrix(),
       lights: scene.lights(),
       options: self.shader_options.clone(),
     }
   }
 
   fn draw_triangle_clipped(&mut self, trig: Trig<Pt>, shader: &Rc<dyn Shader>) {
-    for mut trig in trig.clip_on_w() {
-      trig.divw_in_place();
+    for mut trig in trig.clip() {
+      trig.map_in_place(|pt| pt.scale_to_screen(self.size_f32()));
 
-      for mut trig in trig.clip() {
-        trig.divw_in_place();
-        trig.map_in_place(|pt| pt.scale_to_screen(self.size_f32()));
-
-        for pt in trig.to_edge_pixels() {
-          self.rasterize_pixel(pt, shader);
-        }
+      for pt in trig.to_edge_pixels() {
+        self.rasterize_pixel(pt, shader);
       }
     }
   }
@@ -1617,14 +1655,11 @@ impl Rasterizer {
   fn fill_triangle(&mut self, trig: Trig<Pt>, shader: &Rc<dyn Shader>) {
     self.metric.triangles_rendered += 1;
 
-    for mut trig in trig.clip_on_w() {
-      trig.divw_in_place();
-      for mut trig in trig.clip() {
-        trig.map_in_place(|pt| pt.scale_to_screen(self.size_f32()));
+    for mut trig in trig.clip() {
+      trig.map_in_place(|pt| pt.scale_to_screen(self.size_f32()));
 
-        for pt in trig.to_fill_pixels() {
-          self.rasterize_pixel(pt, shader);
-        }
+      for pt in trig.to_fill_pixels() {
+        self.rasterize_pixel(pt, shader);
       }
     }
   }

@@ -2,7 +2,12 @@ use std::rc::Rc;
 
 use dyn_clone::DynClone;
 
-use crate::{mesh::{Mesh, PolyVert}, raster::{Color, Image, Pt, WorldMesh, COLOR}, types::{Mat4, Vec2, Vec3, Vec4}, util::{divw, divw3, reflect}};
+use crate::{
+  mesh::{Mesh, PolyVert},
+  raster::{Color, Image, Pt, WorldMesh, COLOR},
+  types::{Mat4, Vec2, Vec3, Vec4},
+  util::{divw, divw3, reflect},
+};
 
 pub type TextureHandle = usize;
 
@@ -93,7 +98,11 @@ impl Default for ShaderOptions {
 
 pub struct ShaderContext<'a> {
   pub textures: &'a TextureStash,
-  pub camera: Mat4,
+  pub model_mat4: Mat4,
+  pub view_mat4: Mat4,
+  pub projection_mat4: Mat4,
+  // clip = projection * view * model
+  pub clip_mat4: Mat4,
   pub lights: &'a [Light],
   pub options: ShaderOptions,
 }
@@ -107,12 +116,18 @@ impl<'a> ShaderContext<'a> {
       TextureFilterMode::Bilinear => texture.bilinear_color(uv),
     }
   }
+
+  pub fn update_model_matrix(&mut self, matrix: Mat4) {
+    self.model_mat4 = matrix;
+    self.clip_mat4 = self.projection_mat4 * self.view_mat4 * matrix;
+  }
 }
 
 pub trait Shader: DynClone {
   fn vertex(&self, context: &ShaderContext, pt: &mut Pt) {
     // TODO: texture coordinates perspective correction
-    pt.pos = context.camera * pt.world_pos;
+    pt.world_pos = context.view_mat4 * context.model_mat4 * pt.pos;
+    pt.pos = context.clip_mat4 * pt.pos;
   }
 
   fn fragment(&self, context: &ShaderContext, pt: &mut Pt);
@@ -187,8 +202,7 @@ impl Shader for SpecularShader {
 
     for light in context.lights {
       let light_angle = divw3((*light.pos() - pt.world_pos).normalize());
-      let camera_angle =
-        Vec3::from(context.camera.project_point3(Vec3::ZERO.into())) * -1.0;
+      let camera_angle = Vec3::new(0.0, 0.0, -1.0);
       let light_refl_angle = reflect(&light_angle, &normal).normalize();
 
       let light_intensity = f32::max(light_angle.dot(normal), 0.0);

@@ -60,9 +60,9 @@ impl Light {
     &self.color
   }
 
-  pub fn project(&self, pt: &Vec4, distance: f32) -> Vec4 {
+  pub fn extrude(&self, pt: &Vec4, distance: f32) -> Vec4 {
     let pt = divw(*pt);
-    let dir: Vec4 = (pt - self.pos).normalize();
+    let dir = (pt - self.pos).normalize();
     dir * distance + pt
   }
 
@@ -126,7 +126,7 @@ impl<'a> ShaderContext<'a> {
 pub trait Shader: DynClone {
   fn vertex(&self, context: &ShaderContext, pt: &mut Pt) {
     // TODO: texture coordinates perspective correction
-    pt.world_pos = context.view_mat4 * context.model_mat4 * pt.pos;
+    pt.world_pos = context.model_mat4 * pt.pos;
     pt.pos = context.clip_mat4 * pt.pos;
   }
 

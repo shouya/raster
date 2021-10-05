@@ -7,8 +7,7 @@ use crate::{
   lerp::{lerp, lerp_closed_iter, Lerp},
   mesh::{Mesh, PolyVert},
   shader::{
-    Light, PureColor, Shader, ShaderContext, ShaderOptions, SimpleMaterial,
-    TextureStash,
+    Light, Shader, ShaderContext, ShaderOptions, SimpleMaterial, TextureStash,
   },
   types::{Mat4, Vec2, Vec3, Vec4, Vec4Ord},
   util::{divw, divw3, f32_cmp},
@@ -156,6 +155,10 @@ impl<T> Image<T> {
   pub fn size(&self) -> (usize, usize) {
     self.dimension
   }
+
+  pub fn size_f32(&self) -> (f32, f32) {
+    (self.dimension.0 as f32, self.dimension.1 as f32)
+  }
 }
 
 impl Image<Color> {
@@ -211,6 +214,7 @@ pub struct Camera {
   // world coordinate
   view: Mat4,
   projection: Mat4,
+  matrix: Mat4,
 }
 
 impl Camera {
@@ -222,11 +226,12 @@ impl Camera {
   ) -> Self {
     let projection = Mat4::perspective_rh_gl(fovy, aspect, znear, zfar);
     let view = Mat4::IDENTITY;
-    Self { projection, view }
-  }
-
-  pub fn matrix(&self) -> Mat4 {
-    self.projection * self.view
+    let matrix = projection * view;
+    Self {
+      projection,
+      view,
+      matrix,
+    }
   }
 
   pub fn view_matrix(&self) -> Mat4 {
@@ -239,10 +244,11 @@ impl Camera {
 
   pub fn transformd(&mut self, trans: &Mat4) {
     self.view *= trans.inverse();
+    self.matrix = self.projection * self.view;
   }
 
   pub fn project(&self, pt: Vec4) -> Vec4 {
-    self.matrix() * pt
+    self.matrix * pt
   }
 }
 
@@ -830,6 +836,10 @@ impl<T> Face<T> {
     self.double_faced
   }
 
+  pub fn set_double_faced(&mut self, double_faced: bool) {
+    self.double_faced = double_faced;
+  }
+
   pub fn len(&self) -> usize {
     self.vertices.len()
   }
@@ -911,6 +921,18 @@ impl<T> Face<T> {
   }
 }
 
+impl Face<Pt> {
+  pub fn world_normal(&self) -> Vec3 {
+    debug_assert!(self.vertices.len() >= 3);
+    let p1 = divw3(self.vertices()[0].world_pos);
+    let p2 = divw3(self.vertices()[1].world_pos);
+    let p3 = divw3(self.vertices()[2].world_pos);
+    let v1 = p2 - p1;
+    let v2 = p3 - p1;
+    v1.cross(v2)
+  }
+}
+
 #[derive(Clone)]
 pub struct WorldMesh<T = PolyVert> {
   pub transform: Option<Mat4>,
@@ -958,7 +980,7 @@ impl<T> WorldMesh<T> {
   where
     T: Copy,
   {
-    self.mesh.faces.iter().map(move |f| self.get_face(f))
+    self.mesh.faces()
   }
 
   pub fn set_shader(mut self, shader: impl Shader + 'static) -> Self
@@ -972,22 +994,6 @@ impl<T> WorldMesh<T> {
 
   pub fn model_matrix(&self) -> Mat4 {
     self.transform.unwrap_or(Mat4::IDENTITY)
-  }
-
-  fn get_face(&self, face: &Face<usize>) -> Face<T>
-  where
-    T: Copy,
-  {
-    let mesh = &self.mesh;
-    let vertices = face
-      .vertices()
-      .iter()
-      .map(|i| mesh.vertices[*i])
-      .collect::<Vec<_>>();
-
-    let mut face_t: Face<T> = vertices.into();
-    face_t.double_faced = face.double_faced;
-    face_t
   }
 
   pub fn transformed(mut self, transform: Mat4) -> Self {
@@ -1118,7 +1124,7 @@ impl Default for RasterizerMode {
 }
 
 /// A point on screen with integer xy coordinates and floating depth (z)
-#[derive(PartialEq, Clone, Copy, Debug)]
+#[derive(PartialEq, Clone, Copy, Debug, Default)]
 pub struct Pt {
   pub pos: Vec4,
   pub world_pos: Vec4,
@@ -1130,7 +1136,7 @@ pub struct Pt {
   pub buf_v3: Option<Vec3>,
 }
 
-impl<'a> From<PolyVert> for Pt {
+impl From<PolyVert> for Pt {
   fn from(v: PolyVert) -> Self {
     let mut pt = Self::new(v.pos);
     if let Some(uv) = v.uv {
@@ -1140,6 +1146,33 @@ impl<'a> From<PolyVert> for Pt {
       pt.set_normal(normal);
     }
     pt
+  }
+}
+
+impl Eq for Pt {}
+impl std::hash::Hash for Pt {
+  fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+    self.pos.to_array().map(f32::to_bits).hash(state);
+    self.world_pos.to_array().map(f32::to_bits).hash(state);
+    self.normal.to_array().map(f32::to_bits).hash(state);
+    self.uv.to_array().map(f32::to_bits).hash(state);
+    // other fields are omitted because these hashed properties should
+    // be sufficient to determine a point
+  }
+}
+
+impl From<Vec4> for Pt {
+  fn from(v: Vec4) -> Self {
+    Self {
+      pos: v,
+      world_pos: v,
+      color: COLOR::rgba(1.0, 0.0, 0.0, 1.0),
+      uv: Vec2::new(0.0, 0.0),
+      normal: Vec3::ZERO,
+      in_shadow: None,
+      buf_v2: None,
+      buf_v3: None,
+    }
   }
 }
 
@@ -1204,37 +1237,43 @@ pub struct RasterizerMetric {
   pub render_time: f32,
 }
 
-// the coords of volume are all in clip space
 pub struct ShadowVolume {
-  volume: Vec<Face<Vec4>>,
+  // the coords of volume are all in clip space
+  volume: Mesh<Pt>,
   // key absent: new edge
   // >0: edge is light facing
   // <0: edge is light away
   // =0: edge is silhouette
   edge_index: HashMap<Line<Vec4Ord>, i32>,
   shadow_distance: f32,
+  stencil: Image<i32>,
 }
 
 #[allow(unused)]
 impl ShadowVolume {
-  pub fn new() -> Self {
+  pub fn new(size: (usize, usize)) -> Self {
     Self {
-      volume: vec![],
+      stencil: Image::new(size),
+      volume: Mesh::new(),
       edge_index: HashMap::new(),
-      shadow_distance: 1000.0,
+      shadow_distance: 10000.0,
     }
   }
 
-  pub fn face_count(&self) -> usize {
-    self.volume.len()
-  }
-
-  pub fn add_face(&mut self, face: &Face<Pt>, camera: &Camera, light: &Light) {
-    let sign = if face.normal().dot(*light.dir()) < 0.0 {
+  fn calc_face(
+    &mut self,
+    face: &Face<Pt>,
+    camera: &Camera,
+    light: &Light,
+  ) -> Vec<Face<Vec4>> {
+    let normal = face.world_normal();
+    let sign = if normal.dot(*light.dir()) < 0.0 {
       -1
     } else {
       1
     };
+
+    let mut res = Vec::new();
 
     for line in face.edges() {
       let key = self.register_edge(&line, sign);
@@ -1245,59 +1284,75 @@ impl ShadowVolume {
       let p1 = line.a().world_pos;
       let p2 = line.b().world_pos;
 
-      // let p1_near = light.project(&p1, 0.0001);
-      // let p2_near = light.project(&p2, 0.0001);
-      let p1_far = light.project(&p1, self.shadow_distance);
-      let p2_far = light.project(&p2, self.shadow_distance);
+      let p1_far = light.extrude(&p1, self.shadow_distance);
+      let p2_far = light.extrude(&p2, self.shadow_distance);
 
-      let face: Face<Vec4> = [
+      let face: [Vec4; 4] = [
         camera.project(p1),
         camera.project(p2),
         camera.project(p2_far),
         camera.project(p1_far),
-      ]
-      .into();
+      ];
 
-      self.volume.push(Face::from(face));
+      res.push(face.into());
+
       self.deregister_edge(&key);
     }
+
+    res
   }
 
   pub fn add_world_mesh(
     &mut self,
     mesh: &WorldMesh<Pt>,
-    camera: &Camera,
-    light: &Light,
+    depth: &Image<Option<f32>>,
+    scene: &Scene,
   ) {
+    assert!(scene.lights().len() == 1);
+    let light = scene.lights().first().unwrap();
+    let camera = scene.camera();
+
     if !mesh.casts_shadow {
       return;
     }
 
     for face in mesh.faces() {
-      self.add_face(&face, camera, light);
+      for shadow_face in self.calc_face(&face, camera, light) {
+        self.rasterize_face(&shadow_face, depth);
+      }
+    }
+
+    // different meshes don't share edges
+    self.edge_index.clear();
+  }
+
+  fn rasterize_face(&mut self, face: &Face<Vec4>, zbuf: &Image<Option<f32>>) {
+    let size = self.stencil.size_f32();
+    let sign = if face.is_hidden() { 1 } else { -1 };
+
+    for trig in face.triangulate() {
+      for mut trig in trig.clip() {
+        trig.map_in_place(|pt| pt.scale_to_screen(size));
+        self.rasterize_trig(trig, zbuf, sign);
+      }
     }
   }
 
-  pub fn faces(&self) -> impl Iterator<Item = &Face<Vec4>> + '_ {
-    self.volume.iter()
-  }
-
-  // for rendering the shadow volume
-  pub fn to_world_mesh(&self) -> WorldMesh<Pt> {
-    let mut mesh = Mesh::new();
-    for face in self.faces() {
-      let face_vec3 = face.clone().map(divw3);
-      mesh.add_face(face_vec3.as_slice())
+  fn rasterize_trig(
+    &mut self,
+    trig: Trig<Vec4>,
+    zbuf: &Image<Option<f32>>,
+    sign: i32,
+  ) {
+    for pt in trig.to_fill_pixels() {
+      let coords = (pt.x as i32, pt.y as i32);
+      if let Some(depth) = *zbuf.pixel(coords).unwrap() {
+        if pt.z < depth {
+          let pixel = self.stencil.pixel_mut(coords).unwrap();
+          *pixel += sign;
+        }
+      }
     }
-
-    mesh.seal();
-
-    let mesh = mesh.map(|v: PolyVert| Pt::from(v));
-
-    WorldMesh::from(mesh)
-      .set_shader(PureColor::new(COLOR::rgb(1.0, 0.0, 0.0)))
-      .double_faced(true)
-      .casts_shadow(false)
   }
 
   fn register_edge(&mut self, line: &Line<Pt>, sign: i32) -> Line<Vec4Ord> {
@@ -1318,6 +1373,14 @@ impl ShadowVolume {
   fn deregister_edge(&mut self, key: &Line<Vec4Ord>) {
     self.edge_index.remove(key);
   }
+
+  fn stencil(&self) -> &Image<i32> {
+    &self.stencil
+  }
+
+  // fn volume_mesh(&self) -> &WorldMesh {
+  // WorldMesh::from(self.volume)
+  //}
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -1394,18 +1457,21 @@ impl Rasterizer {
   pub fn rasterize(&mut self, scene: &Scene) {
     let now = Instant::now();
 
+    let meshes = self.meshes_with_vertex_shaded(scene);
+
     match self.shadow_mode {
-      ShadowMode::NoShadow => self.rasterize_pixels(scene),
+      ShadowMode::NoShadow => self.rasterize_pixels(scene, &meshes),
       ShadowMode::RenderShadow => {
-        let mut shadow_volume = ShadowVolume::new();
-        self.rasterize_pixels_with_shadow(scene, &mut shadow_volume);
-        let stencil_buffer = self.calculate_stencil_buffer(&shadow_volume);
-        self.save_shadow_info_in_pixels(&stencil_buffer);
+        let mut shadow = ShadowVolume::new(self.size_usize());
+        self.rasterize_pixels(scene, &meshes);
+        self.rasterize_shadow(scene, &meshes, &mut shadow);
+        self.save_shadow_info_in_pixels(shadow.stencil());
       }
       ShadowMode::VisualizeShadowVolume => {
-        let mut shadow_volume = ShadowVolume::new();
-        self.rasterize_pixels_with_shadow(scene, &mut shadow_volume);
-        self.rasterize_shadow_volume(&shadow_volume);
+        let mut shadow = ShadowVolume::new(self.size_usize());
+        self.rasterize_pixels(scene, &meshes);
+        self.rasterize_shadow(scene, &meshes, &mut shadow);
+        self.save_shadow_info_in_pixels(shadow.stencil());
       }
     }
 
@@ -1415,84 +1481,15 @@ impl Rasterizer {
   }
 
   #[inline(never)]
-  pub fn rasterize_pixels_with_shadow(
+  pub fn rasterize_shadow(
     &mut self,
     scene: &Scene,
-    volume: &mut ShadowVolume,
+    meshes: &[WorldMesh<Pt>],
+    shadow_volume: &mut ShadowVolume,
   ) {
-    let context = self.shader_context(scene);
-
-    debug_assert!(scene.lights().len() == 1);
-    let light = scene.lights().first().unwrap();
-    let camera = scene.camera();
-
-    for mesh in scene.iter_meshes() {
-      let shader = mesh.shader();
-      let mesh = mesh.apply_transformation().to_pt_mesh();
-
-      volume.add_world_mesh(&mesh, camera, light);
-
-      for mut face in mesh.faces() {
-        face.map_in_place(|mut p| shader.vertex(&context, &mut p));
-        self.metric.vertices_shaded += face.len();
-
-        if face.is_hidden() {
-          self.metric.hidden_face_removed += 1;
-          continue;
-        }
-
-        self.metric.faces_rendered += 1;
-        self.rasterize_face(&mut face, shader.clone());
-      }
-    }
-  }
-
-  #[inline(never)]
-  pub fn calculate_stencil_buffer(
-    &mut self,
-    volume: &ShadowVolume,
-  ) -> Image<i32> {
-    let size = (self.size.0 as usize, self.size.1 as usize);
-    let mut stencil_buffer = Image::new_filled(size, 0);
-
-    for face in volume.faces() {
-      let sign = if face.is_hidden() { 1 } else { -1 };
-      for trig in face.triangulate() {
-        self.fill_trig_in_stencil_buffer(trig, sign, &mut stencil_buffer);
-      }
-    }
-
-    stencil_buffer
-  }
-
-  #[inline(never)]
-  fn fill_trig_in_stencil_buffer(
-    &self,
-    trig: Trig<Vec4>,
-    sign: i32,
-    buffer: &mut Image<i32>,
-  ) {
-    let (w, h) = self.size();
-
-    for mut trig in trig.clip() {
-      trig.divw_in_place();
-      trig.map_in_place(|pt| pt.scale_to_screen(self.size_f32()));
-
-      for pt in trig.to_fill_pixels() {
-        let (x, y) = (pt.x as i32, pt.y as i32);
-
-        if x < 0 || x >= w || y < 0 || y >= h {
-          return;
-        }
-
-        let coords = (x, y);
-        if let Some(depth) = *self.zbuffer.pixel(coords).unwrap() {
-          if pt.z < depth {
-            let pixel = buffer.pixel_mut(coords).unwrap();
-            *pixel += sign;
-          }
-        }
-      }
+    let depth = &self.zbuffer;
+    for mesh in meshes.iter() {
+      shadow_volume.add_world_mesh(&mesh, depth, scene);
     }
   }
 
@@ -1505,8 +1502,8 @@ impl Rasterizer {
     }
   }
 
-  pub fn rasterize_pixels(&mut self, scene: &Scene) {
-    for mesh in self.meshes_with_vertex_shaded(scene) {
+  pub fn rasterize_pixels(&mut self, scene: &Scene, meshes: &[WorldMesh<Pt>]) {
+    for mesh in meshes.iter() {
       let shader = mesh.shader();
 
       for face in mesh.faces() {
@@ -1521,22 +1518,22 @@ impl Rasterizer {
     }
   }
 
-  fn rasterize_shadow_volume(&mut self, shadow_volume: &ShadowVolume) {
-    let shadow_mesh = shadow_volume.to_world_mesh();
-    let shader = shadow_mesh.shader();
+  fn rasterize_shadow_volume(&mut self, _shadow_volume: ShadowVolume) {
+    // let shadow_mesh = shadow_volume.into_world_mesh();
+    // let shader = shadow_mesh.shader();
 
-    for mut face in shadow_mesh.faces() {
-      // make sure shadow volume is drawn above the actual mesh
-      face.map_in_place(|p| p.pos.z -= 0.000001);
-      self.metric.vertices_shaded += face.len();
+    // for mut face in shadow_mesh.faces() {
+    //   // make sure shadow volume is drawn above the actual mesh
+    //   face.map_in_place(|p| p.z -= 0.000001);
+    //   self.metric.vertices_shaded += face.len();
 
-      // draw wireframe
-      for line in face.edges() {
-        for line in line.clip() {
-          self.draw_line(line, &shader);
-        }
-      }
-    }
+    //   // draw wireframe
+    //   for line in face.edges() {
+    //     for line in line.clip() {
+    //       self.draw_line(line, &shader);
+    //     }
+    //   }
+    // }
   }
 
   pub fn rasterize_face(&mut self, face: &Face<Pt>, shader: Rc<dyn Shader>) {

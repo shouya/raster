@@ -93,7 +93,6 @@ where
 }
 
 impl<T> Mesh<T> {
-  #[allow(unused)]
   pub fn new() -> Self
   where
     T: Default,
@@ -139,11 +138,50 @@ impl<T> Mesh<T> {
       faces: self.faces,
     }
   }
+
+  pub fn resolve_face(&self, face: &Face<usize>) -> Face<T>
+  where
+    T: Copy,
+  {
+    let vertices = face
+      .vertices()
+      .iter()
+      .map(|i| self.vertices[*i])
+      .collect::<Vec<_>>();
+
+    let mut face_t: Face<T> = vertices.into();
+    face_t.set_double_faced(face.double_faced());
+    face_t
+  }
+
+  pub fn faces(&self) -> impl Iterator<Item = Face<T>> + '_
+  where
+    T: Copy,
+  {
+    self.faces.iter().map(move |f| self.resolve_face(f))
+  }
 }
 
 impl<T> Mesh<T> {
   pub fn set_material(&mut self, material: impl Shader + 'static) {
     self.material = Some(Rc::new(material));
+  }
+
+  // do not utilize index at all
+  pub fn straight_add_face(&mut self, vertices: &[T])
+  where
+    T: Clone,
+  {
+    // assert for sealed is not required for straight methods. I kept
+    // it here only for consistency.
+    assert!(!self.is_sealed());
+
+    let mut face = Face::new(false);
+    for i in 0..vertices.len() {
+      let vert = vertices[i].clone();
+      face.add_vert(self.straight_add_vert(vert));
+    }
+    self.faces.push(face);
   }
 
   pub fn add_face<S>(&mut self, vertices: &[S])
@@ -176,6 +214,11 @@ impl<T> Mesh<T> {
         n
       }
     }
+  }
+  fn straight_add_vert(&mut self, vert: T) -> usize {
+    let n = self.vertices.len();
+    self.vertices.push(vert);
+    n
   }
 }
 

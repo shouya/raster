@@ -3,7 +3,7 @@ use std::{collections::HashMap, hash::Hash, rc::Rc};
 use crate::{
   raster::Face,
   shader::Shader,
-  types::{Mat4, Vec2, Vec3},
+  types::{Vec2, Vec3},
 };
 
 // A polygon vertex
@@ -105,10 +105,13 @@ impl<T> Mesh<T> {
     }
   }
 
-  // A sealed mesh is allowed to perform otherwise "expensive"
-  // operations like clone, as_ref, etc.
+  // A sealed mesh has vertex index dropped, thus allowing otherwise
+  // "expensive" operations like clone, as_ref, etc.
   //
-  // However, a sealed mesh cannot add faces any more.
+  // A fresh mesh is not sealed. And a mesh cloned from another mesh
+  // is always sealed, regardless if the original mesh is sealed.
+  //
+  // A sealed mesh cannot add faces any more.
   pub fn is_sealed(&self) -> bool {
     self.index.is_none()
   }
@@ -167,23 +170,6 @@ impl<T> Mesh<T> {
     self.material = Some(Rc::new(material));
   }
 
-  // do not utilize index at all
-  pub fn straight_add_face(&mut self, vertices: &[T])
-  where
-    T: Clone,
-  {
-    // assert for sealed is not required for straight methods. I kept
-    // it here only for consistency.
-    assert!(!self.is_sealed());
-
-    let mut face = Face::new(false);
-    for i in 0..vertices.len() {
-      let vert = vertices[i].clone();
-      face.add_vert(self.straight_add_vert(vert));
-    }
-    self.faces.push(face);
-  }
-
   pub fn add_face<S>(&mut self, vertices: &[S])
   where
     S: Copy,
@@ -214,25 +200,5 @@ impl<T> Mesh<T> {
         n
       }
     }
-  }
-  fn straight_add_vert(&mut self, vert: T) -> usize {
-    let n = self.vertices.len();
-    self.vertices.push(vert);
-    n
-  }
-}
-
-impl Mesh<PolyVert> {
-  pub fn apply_transformation(&self, matrix: &Mat4) -> Self {
-    assert!(self.is_sealed());
-
-    let mut mesh = self.clone();
-    mesh.map_in_place(|mut v| {
-      v.pos = matrix.transform_point3(v.pos);
-      if let Some(normal) = v.normal {
-        v.normal = Some(matrix.transform_vector3(normal))
-      }
-    });
-    mesh
   }
 }

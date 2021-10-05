@@ -7,7 +7,8 @@ use crate::{
   lerp::{lerp, lerp_closed_iter, Lerp},
   mesh::{Mesh, PolyVert},
   shader::{
-    Light, Shader, ShaderContext, ShaderOptions, SimpleMaterial, TextureStash,
+    Light, PureColor, Shader, ShaderContext, ShaderOptions, SimpleMaterial,
+    TextureStash,
   },
   types::{Mat4, Vec2, Vec3, Vec4, Vec4Ord},
   util::{divw, divw3, f32_cmp},
@@ -840,14 +841,6 @@ impl<T> Face<T> {
     self.double_faced = double_faced;
   }
 
-  pub fn len(&self) -> usize {
-    self.vertices.len()
-  }
-
-  pub fn as_slice(&self) -> &[T] {
-    self.vertices.as_slice()
-  }
-
   /// the caller needs to ensure T is in clip space.
   pub fn is_hidden(&self) -> bool
   where
@@ -910,6 +903,7 @@ impl<T> Face<T> {
     self.vertices.iter_mut().for_each(f)
   }
 
+  #[allow(unused)]
   pub fn map<F, S>(self, f: F) -> Face<S>
   where
     F: Fn(T) -> S,
@@ -944,6 +938,7 @@ pub struct WorldMesh<T = PolyVert> {
 impl<T> From<Rc<Mesh<T>>> for WorldMesh<T> {
   fn from(mesh: Rc<Mesh<T>>) -> Self {
     assert!(mesh.is_sealed());
+
     Self {
       mesh,
       transform: None,
@@ -956,6 +951,7 @@ impl<T> From<Rc<Mesh<T>>> for WorldMesh<T> {
 impl<T> From<Mesh<T>> for WorldMesh<T> {
   fn from(mesh: Mesh<T>) -> Self {
     assert!(mesh.is_sealed());
+
     Self {
       mesh: Rc::new(mesh),
       transform: None,
@@ -1021,21 +1017,6 @@ impl<T> WorldMesh<T> {
 }
 
 impl WorldMesh<PolyVert> {
-  pub fn apply_transformation(&self) -> Self {
-    match self.transform {
-      Some(transform) => {
-        let mesh = self.mesh.apply_transformation(&transform);
-        Self {
-          mesh: Rc::new(mesh),
-          transform: None,
-          double_faced: self.double_faced,
-          casts_shadow: self.casts_shadow,
-        }
-      }
-      None => self.clone(),
-    }
-  }
-
   pub fn to_pt_mesh(&self) -> WorldMesh<Pt> {
     let Self {
       transform,
@@ -1287,12 +1268,14 @@ impl ShadowVolume {
       let p1_far = light.extrude(&p1, self.shadow_distance);
       let p2_far = light.extrude(&p2, self.shadow_distance);
 
-      let face: [Vec4; 4] = [
+      let face = [
         camera.project(p1),
         camera.project(p2),
         camera.project(p2_far),
         camera.project(p1_far),
       ];
+
+      self.volume.add_face(&face);
 
       res.push(face.into());
 
@@ -1378,9 +1361,15 @@ impl ShadowVolume {
     &self.stencil
   }
 
-  // fn volume_mesh(&self) -> &WorldMesh {
-  // WorldMesh::from(self.volume)
-  //}
+  fn volume_mesh(&self) -> WorldMesh<Pt> {
+    let mut volume = self.volume.clone();
+    volume.seal();
+
+    WorldMesh::from(volume)
+      .set_shader(PureColor::new(COLOR::rgb(1.0, 0.0, 0.0)))
+      .double_faced(true)
+      .casts_shadow(false)
+  }
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -1460,18 +1449,21 @@ impl Rasterizer {
     let meshes = self.meshes_with_vertex_shaded(scene);
 
     match self.shadow_mode {
-      ShadowMode::NoShadow => self.rasterize_pixels(scene, &meshes),
+      ShadowMode::NoShadow => self.rasterize_pixels(&meshes),
       ShadowMode::RenderShadow => {
         let mut shadow = ShadowVolume::new(self.size_usize());
-        self.rasterize_pixels(scene, &meshes);
+        self.rasterize_pixels(&meshes);
         self.rasterize_shadow(scene, &meshes, &mut shadow);
         self.save_shadow_info_in_pixels(shadow.stencil());
+        self.stencil_buffer = Some(shadow.stencil().clone());
       }
       ShadowMode::VisualizeShadowVolume => {
         let mut shadow = ShadowVolume::new(self.size_usize());
-        self.rasterize_pixels(scene, &meshes);
+        self.rasterize_pixels(&meshes);
         self.rasterize_shadow(scene, &meshes, &mut shadow);
         self.save_shadow_info_in_pixels(shadow.stencil());
+        self.stencil_buffer = Some(shadow.stencil().clone());
+        self.rasterize_shadow_volume(&shadow.volume_mesh());
       }
     }
 
@@ -1502,7 +1494,8 @@ impl Rasterizer {
     }
   }
 
-  pub fn rasterize_pixels(&mut self, scene: &Scene, meshes: &[WorldMesh<Pt>]) {
+  // Pt.pos field should be in clip space.
+  pub fn rasterize_pixels(&mut self, meshes: &[WorldMesh<Pt>]) {
     for mesh in meshes.iter() {
       let shader = mesh.shader();
 
@@ -1518,22 +1511,18 @@ impl Rasterizer {
     }
   }
 
-  fn rasterize_shadow_volume(&mut self, _shadow_volume: ShadowVolume) {
-    // let shadow_mesh = shadow_volume.into_world_mesh();
-    // let shader = shadow_mesh.shader();
+  fn rasterize_shadow_volume(&mut self, mesh: &WorldMesh<Pt>) {
+    let shader = mesh.shader();
 
-    // for mut face in shadow_mesh.faces() {
-    //   // make sure shadow volume is drawn above the actual mesh
-    //   face.map_in_place(|p| p.z -= 0.000001);
-    //   self.metric.vertices_shaded += face.len();
+    for mut face in mesh.faces() {
+      // make sure shadow volume is drawn above the actual mesh
+      face.map_in_place(|p| p.pos.z -= 0.000001);
 
-    //   // draw wireframe
-    //   for line in face.edges() {
-    //     for line in line.clip() {
-    //       self.draw_line(line, &shader);
-    //     }
-    //   }
-    // }
+      // draw wireframe
+      for line in face.edges() {
+        self.draw_line(line, &shader);
+      }
+    }
   }
 
   pub fn rasterize_face(&mut self, face: &Face<Pt>, shader: Rc<dyn Shader>) {

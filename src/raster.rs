@@ -153,6 +153,13 @@ impl<T> Image<T> {
     Image { pixels, dimension }
   }
 
+  pub fn map_in_place<F>(&mut self, f: F)
+  where
+    F: Fn(&mut T) -> (),
+  {
+    self.pixels.iter_mut().for_each(f)
+  }
+
   pub fn size(&self) -> (usize, usize) {
     self.dimension
   }

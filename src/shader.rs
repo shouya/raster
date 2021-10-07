@@ -117,6 +117,11 @@ impl<'a> ShaderContext<'a> {
     }
   }
 
+  // bump texture doesn't have to be as accurate as color texture
+  pub fn get_bump_texture(&self, handle: TextureHandle, uv: Vec2) -> Color {
+    self.textures.get(handle).nearest_color(uv)
+  }
+
   pub fn update_model_matrix(&mut self, matrix: Mat4) {
     self.model_mat4 = matrix;
     self.clip_mat4 = self.projection_mat4 * self.view_mat4 * matrix;
@@ -234,6 +239,8 @@ pub struct SimpleMaterial {
   pub dissolve: f32,
   // (map_Kd)
   pub color_texture: Option<TextureHandle>,
+  // (map_Bump)
+  pub bump_texture: Option<TextureHandle>,
 }
 
 impl Default for SimpleMaterial {
@@ -246,6 +253,7 @@ impl Default for SimpleMaterial {
       diffuse_color: COLOR::rgb(1.0, 1.0, 1.0),
       dissolve: 1.0,
       color_texture: None,
+      bump_texture: None,
     }
   }
 }
@@ -256,8 +264,8 @@ impl SimpleMaterial {
     context: &ShaderContext,
     pt: &Pt,
     light: &Light,
+    normal: Vec3,
   ) -> Color {
-    let normal = pt.normal.normalize();
     let light_angle = (divw3(*light.pos()) - divw3(pt.world_pos)).normalize();
     // this is
     // Vec3::from(context.camera.project_point3(Vec3::ZERO.into()))
@@ -272,8 +280,7 @@ impl SimpleMaterial {
     diffuse_light_color * light_intensity
   }
 
-  fn specular_color(&self, pt: &Pt, light: &Light) -> Color {
-    let normal = pt.normal.normalize();
+  fn specular_color(&self, pt: &Pt, light: &Light, normal: Vec3) -> Color {
     let light_angle = (divw3(*light.pos()) - divw3(pt.world_pos)).normalize();
     let light_refl_angle = reflect(&light_angle, &normal).normalize();
     let camera_angle = Vec3::new(0.0, 0.0, -1.0);
@@ -295,7 +302,17 @@ impl SimpleMaterial {
     pt: &Pt,
     light: &Light,
   ) -> Color {
-    self.diffuse_color(context, pt, light) + self.specular_color(pt, light)
+    let mut normal = pt.normal.normalize();
+    let bump_offset = match self.bump_texture {
+      Some(handle) => context.get_bump_texture(handle, pt.uv),
+      None => self.diffuse_color,
+    };
+    normal += bump_offset.truncate();
+
+    let diffuse = self.diffuse_color(context, pt, light, normal);
+    let specular = self.specular_color(pt, light, normal);
+
+    diffuse + specular
   }
 
   fn fragment_ambient(&self, _context: &ShaderContext, pt: &mut Pt) {
@@ -326,6 +343,7 @@ impl SimpleMaterial {
       diffuse_color: COLOR::rgb(1.0, 1.0, 1.0),
       dissolve: 1.0,
       color_texture: None,
+      bump_texture: None,
     }
   }
 }

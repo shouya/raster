@@ -2,7 +2,7 @@ use std::{
   collections::HashMap, fs::File, io::Read, path::Path, rc::Rc, str::FromStr,
 };
 
-use anyhow::{ensure, Result};
+use anyhow::{bail, ensure, Result};
 
 use crate::{
   mesh::Mesh,
@@ -62,10 +62,20 @@ impl Mtl {
         ["Ns", v] => curr_mat.specular_highlight = parse_float(v)?,
         ["d", d] => curr_mat.dissolve = parse_float(d)?,
         ["map_Kd", texture @ ..] => {
-          let handle = textures.add(parse_texture_color(texture, rel_path)?);
-          curr_mat.color_texture = Some(handle);
+          if let Ok(texture) = parse_texture(texture, rel_path) {
+            let handle = textures.add(texture);
+            curr_mat.color_texture = Some(handle);
+          }
         }
-        [_any @ ..] => {}
+        ["map_Bump", texture @ ..] => {
+          if let Ok(texture) = parse_texture(texture, rel_path) {
+            let handle = textures.add(texture);
+            curr_mat.bump_texture = Some(handle);
+          }
+        }
+        [_any @ ..] => {
+          // unrecognized options, skipping
+        }
       }
     }
 
@@ -225,16 +235,24 @@ fn parse_vec2(vs: &[&str]) -> Result<Vec2> {
   Ok(Vec2::from_slice(&parse_floats(vs)?))
 }
 
-fn parse_texture_color(
-  options: &[&str],
-  rel_path: &Path,
-) -> Result<Image<Color>> {
-  ensure!(
-    options.len() == 1,
-    "texture options are not supported: {:?}",
-    options
-  );
-  let path = rel_path.join(options[0]);
+fn parse_texture(options: &[&str], rel_path: &Path) -> Result<Image<Color>> {
+  match options {
+    &[path] => load_image_texture(path, rel_path),
+    &["-bm", val, path] => {
+      let multiplier = parse_float(val)?;
+      let mut texture = load_image_texture(path, rel_path)?;
+      texture.map_in_place(|color| {
+        *color -= 0.5;
+        *color *= multiplier;
+      });
+      Ok(texture)
+    }
+    _ => bail!("Texture syntax unsupported"),
+  }
+}
+
+fn load_image_texture(path: &str, rel_path: &Path) -> Result<Image<Color>> {
+  let path = rel_path.join(path);
   let imgfile = image::io::Reader::open(&path)?
     .with_guessed_format()?
     .decode()?

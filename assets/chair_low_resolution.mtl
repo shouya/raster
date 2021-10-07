@@ -10,7 +10,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 2
-map_Bump -bm 0.800000 WoodQuarteredChiffon001_NRM16_3K.tif
+map_Bump -bm 0.800000 WoodQuarteredChiffon001_NRM_3K.jpg
 map_Kd WoodQuarteredChiffon001_COL_3K.jpg
 
 newmtl screw

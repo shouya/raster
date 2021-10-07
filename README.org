@@ -37,7 +37,7 @@ Please note that not all features can be explored via the GUI.
 - Wavefront model (=.obj=) loading
   + Material support (=.mtl=)
   + Color texture support
-  + Bump map (pending)
+  + Bump map support
   + Multi object/multi material in a single =obj= file
 
 *** UI features
@@ -55,7 +55,6 @@ Camera controls:
 *** Planned features
 
 - transparency support
-- bump map
 - build executable binaries from CI
 - write a doc on guided exploration of various graphics glitches
   + z-fighting

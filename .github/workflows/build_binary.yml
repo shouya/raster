@@ -1,0 +1,46 @@
+name: Rust
+
+on:
+  push:
+    tags:
+      - '*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: Publish for ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: raster
+            asset_name: raster-linux-amd64
+          - os: windows-latest
+            artifact: raster.exe
+            asset_name: raster-windows-amd64
+          - os: macos-latest
+            artifact: raster
+            asset_name: raster-macos-amd64
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+    - uses: actions/checkout@v2
+    - name: Build
+      run: cargo build --verbose --release
+    
+    - name: Create artifact
+      run: |
+        mkdir artifact
+        cp -r assets artifact/assets
+        cp target/release/${{ matrix.artifact }} artifact/${{ matrix.artifact }}
+        tar czvf ${{ matrix.asset_name }}.tar.gz -C artifact .
+    
+    - name: Upload binaries to release
+      uses: svenstaro/upload-release-action@v2
+      with:
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        file: ${{ matrix.asset_name }}.tar.gz
+        asset_name: ${{ matrix.asset_name }}.tar.gz
+        tag: ${{ github.ref }}
